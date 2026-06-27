@@ -1,0 +1,58 @@
+{
+  "name": "@ivarse/payload-erpnext-plugin",
+  "version": "1.0.0",
+  "description": "Payload CMS plugin for ERPNext integration. Multi-doctype form workflows, credential management, proxy endpoints, and async job forwarding.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean --out-dir dist",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch --out-dir dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "payload",
+    "payloadcms",
+    "erpnext",
+    "cms",
+    "plugin"
+  ],
+  "author": "IVarse",
+  "license": "MIT",
+  "peerDependencies": {
+    "payload": "^3.0.0",
+    "@payloadcms/ui": "^3.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "dependencies": {
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@payloadcms/ui": "^3.0.0",
+    "@types/node": "^22.0.0",
+    "payload": "^3.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  }
+}
