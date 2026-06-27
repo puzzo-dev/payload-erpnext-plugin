@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "maestro-workflow-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "maestro-workflow-mcp@latest"
+      ]
+    }
+  }
+}
