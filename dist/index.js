@@ -36,16 +36,22 @@ __export(index_exports, {
   executeERPNextWorkflows: () => executeERPNextWorkflows,
   forwardToERPNext: () => forwardToERPNext2,
   forwardToERPNextJob: () => forwardToERPNext,
-  getCredentials: () => getCredentials
+  getCredentials: () => getCredentials,
+  verifyERPNextWebhookSignature: () => verifyERPNextWebhookSignature
 });
 module.exports = __toCommonJS(index_exports);
 
 // src/types.ts
+var import_node_crypto = require("crypto");
 var INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET;
 function isInternalAuth(req) {
   if (!INTERNAL_API_SECRET) return false;
   const authSecret = req.headers?.get("x-internal-auth");
-  return Boolean(authSecret && authSecret === INTERNAL_API_SECRET);
+  if (!authSecret) return false;
+  const a = Buffer.from(authSecret);
+  const b = Buffer.from(INTERNAL_API_SECRET);
+  if (a.byteLength !== b.byteLength) return false;
+  return (0, import_node_crypto.timingSafeEqual)(a, b);
 }
 var getUserSiteId = (user) => {
   if (!user.site) return null;
@@ -472,23 +478,24 @@ var ERPNextConfig = {
           fields: [
             {
               name: "defaultDocType",
-              type: "select",
+              type: "text",
               defaultValue: "Lead",
-              options: [
-                { label: "Lead", value: "Lead" },
-                { label: "Contact", value: "Contact" },
-                { label: "Customer", value: "Customer" },
-                { label: "Web Form Submission", value: "Web Form Submission" },
-                { label: "Custom", value: "Custom" }
-              ],
-              admin: { description: "Default ERPNext DocType to create from form submissions" }
+              admin: {
+                description: "Default ERPNext DocType to create from form submissions. Fetched live from the connected ERPNext site.",
+                components: {
+                  Field: {
+                    path: "./components/ERPNextDocTypeSelect/index",
+                    exportName: "ERPNextDocTypeSelectField"
+                  }
+                }
+              }
             },
             {
               name: "customDocType",
               type: "text",
               admin: {
-                description: 'Custom DocType name (when "Custom" is selected above)',
-                condition: (_data, siblingData) => siblingData?.defaultDocType === "Custom"
+                description: "Custom DocType name (use when the desired DocType is not in the fetched list)",
+                condition: (_data, siblingData) => !siblingData?.defaultDocType
               }
             },
             {
@@ -738,7 +745,10 @@ var ERPNextFormWorkflows = {
                 width: "25%",
                 description: "ERPNext DocType fetched from the site connection.",
                 components: {
-                  Field: "/plugins/erpnext/components/ERPNextDocTypeSelect"
+                  Field: {
+                    path: "./components/ERPNextDocTypeSelect/index",
+                    exportName: "ERPNextDocTypeSelectField"
+                  }
                 }
               }
             },
@@ -2555,6 +2565,12 @@ function erpnextPlugin(options = {}) {
     };
   };
 }
+function verifyERPNextWebhookSignature(rawBody, signature, secret, encoding = "hex") {
+  const { createHmac, timingSafeEqual: timingSafeEqual2 } = require("crypto");
+  const expected = createHmac("sha256", secret).update(rawBody).digest(encoding);
+  if (expected.length !== signature.length) return false;
+  return timingSafeEqual2(Buffer.from(expected), Buffer.from(signature));
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   authHeaders,
@@ -2563,5 +2579,6 @@ function erpnextPlugin(options = {}) {
   executeERPNextWorkflows,
   forwardToERPNext,
   forwardToERPNextJob,
-  getCredentials
+  getCredentials,
+  verifyERPNextWebhookSignature
 });

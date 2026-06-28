@@ -105,4 +105,18 @@ interface ERPNextPluginOptions {
  */
 declare function erpnextPlugin(options?: ERPNextPluginOptions): Plugin;
 
-export { type ERPNextPluginOptions, authHeaders, enqueueForwardToERPNext, erpnextPlugin, executeERPNextWorkflows, forwardToERPNext$1 as forwardToERPNext, forwardToERPNext as forwardToERPNextJob, getCredentials };
+/**
+ * Verify an ERPNext HMAC-SHA256 webhook signature in constant time.
+ *
+ * ERPNext/Frappe sends:
+ *   - `X-ERPNext-Signature`: hex digest  (standard ERPNext webhook)
+ *   - `X-Frappe-Webhook-Signature`: base64 digest  (OpsCloud / custom Frappe apps)
+ *
+ * @param rawBody   - raw request body string (before JSON.parse)
+ * @param signature - value of the signature header (hex or base64)
+ * @param secret    - shared HMAC secret
+ * @param encoding  - 'hex' (default) or 'base64'
+ */
+declare function verifyERPNextWebhookSignature(rawBody: string, signature: string, secret: string, encoding?: 'hex' | 'base64'): boolean;
+
+export { type ERPNextCredentials, type ERPNextPluginOptions, authHeaders, enqueueForwardToERPNext, erpnextPlugin, executeERPNextWorkflows, forwardToERPNext$1 as forwardToERPNext, forwardToERPNext as forwardToERPNextJob, getCredentials, verifyERPNextWebhookSignature };

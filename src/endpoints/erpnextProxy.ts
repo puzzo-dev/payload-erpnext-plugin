@@ -1,4 +1,4 @@
-import type { Endpoint, PayloadRequest } from 'payload'
+import type { Endpoint, PayloadRequest, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import type { ERPNextCredentials } from '../types';
 import { decryptCredential } from '../utils/erpnextCrypto';
@@ -59,7 +59,7 @@ export async function getCredentials(
 ): Promise<ERPNextCredentials | null> {
     const findConfig = async (where: Parameters<typeof payload.find>[0]['where']) => {
         return payload.find({
-            collection: 'erpnext-config' as 'users',
+            collection: 'erpnext-config' as unknown as CollectionSlug,
             where,
             limit: 1,
             depth: 0,

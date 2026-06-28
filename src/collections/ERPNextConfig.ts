@@ -1,4 +1,4 @@
-import type { CollectionConfig, CollectionAfterChangeHook } from 'payload'
+import type { CollectionConfig, CollectionAfterChangeHook, CollectionSlug } from 'payload'
 import {
     siteScopedCreate, siteScopedDelete, siteScopedRead, siteScopedUpdate
 } from '../access/roles';
@@ -19,7 +19,7 @@ async function encryptBeforeChange({ value, previousDoc, field, req }: { value: 
         // previousDoc has already passed through afterRead hooks and is masked.
         // We must fetch the raw document from the database to restore the encrypted value.
         const rawConfig = await req.payload.findByID({
-            collection: 'erpnext-config' as 'users',
+            collection: 'erpnext-config' as unknown as CollectionSlug,
             id: previousDoc.id,
             depth: 0,
             overrideAccess: true,
@@ -67,7 +67,7 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
     // hooks, which MASK apiKey/apiSecret for logged-in users (e.g. "••••xxxx").
     // We must re-fetch with preventMasking to get the real credentials.
     const rawConfig = await req.payload.findByID({
-        collection: 'erpnext-config' as 'users',
+        collection: 'erpnext-config' as unknown as CollectionSlug,
         id: doc.id,
         depth: 0,
         overrideAccess: true,
@@ -132,7 +132,7 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
         // ── Persist fetched data on the document ───────────────────
         const now = new Date().toISOString()
         await req.payload.update({
-            collection: 'erpnext-config' as 'users',
+            collection: 'erpnext-config' as unknown as CollectionSlug,
             id: doc.id,
             data: {
                 availableCompanies: companies,
@@ -155,7 +155,7 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
         // Mark as disconnected on failure
         try {
             await req.payload.update({
-                collection: 'erpnext-config' as 'users',
+                collection: 'erpnext-config' as unknown as CollectionSlug,
                 id: doc.id,
                 data: { connectionStatus: 'disconnected' } as any,
                 overrideAccess: true,
@@ -373,23 +373,24 @@ export const ERPNextConfig: CollectionConfig = {
                     fields: [
                         {
                             name: 'defaultDocType',
-                            type: 'select',
+                            type: 'text',
                             defaultValue: 'Lead',
-                            options: [
-                                { label: 'Lead', value: 'Lead' },
-                                { label: 'Contact', value: 'Contact' },
-                                { label: 'Customer', value: 'Customer' },
-                                { label: 'Web Form Submission', value: 'Web Form Submission' },
-                                { label: 'Custom', value: 'Custom' },
-                            ],
-                            admin: { description: 'Default ERPNext DocType to create from form submissions' },
+                            admin: {
+                                description: 'Default ERPNext DocType to create from form submissions. Fetched live from the connected ERPNext site.',
+                                components: {
+                                    Field: {
+                                        path: './components/ERPNextDocTypeSelect/index',
+                                        exportName: 'ERPNextDocTypeSelectField',
+                                    },
+                                },
+                            },
                         },
                         {
                             name: 'customDocType',
                             type: 'text',
                             admin: {
-                                description: 'Custom DocType name (when "Custom" is selected above)',
-                                condition: (_data, siblingData) => siblingData?.defaultDocType === 'Custom',
+                                description: 'Custom DocType name (use when the desired DocType is not in the fetched list)',
+                                condition: (_data, siblingData) => !siblingData?.defaultDocType,
                             },
                         },
                         {

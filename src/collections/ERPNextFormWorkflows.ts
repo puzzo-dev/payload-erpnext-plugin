@@ -93,7 +93,10 @@ export const ERPNextFormWorkflows: CollectionConfig = {
                                 width: '25%',
                                 description: 'ERPNext DocType fetched from the site connection.',
                                 components: {
-                                    Field: '/plugins/erpnext/components/ERPNextDocTypeSelect',
+                                    Field: {
+                                        path: './components/ERPNextDocTypeSelect/index',
+                                        exportName: 'ERPNextDocTypeSelectField',
+                                    },
                                 },
                             },
                         },

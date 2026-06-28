@@ -1,4 +1,4 @@
-# @ivarse/payload-erpnext-plugin
+# payload-erpnext-plugin
 
 A self-contained **Payload CMS 3.x plugin** for bidirectional ERPNext integration.
 
@@ -34,9 +34,9 @@ It provides:
 ## Installation
 
 ```bash
-npm install @ivarse/payload-erpnext-plugin
+npm install payload-erpnext-plugin
 # or
-pnpm add @ivarse/payload-erpnext-plugin
+pnpm add payload-erpnext-plugin
 ```
 
 ---
@@ -47,7 +47,7 @@ pnpm add @ivarse/payload-erpnext-plugin
 
 ```typescript
 import { buildConfig } from 'payload'
-import { erpnextPlugin, forwardToERPNext } from '@ivarse/payload-erpnext-plugin'
+import { erpnextPlugin, forwardToERPNext } from 'payload-erpnext-plugin'
 import { formBuilderPlugin } from '@payloadcms/plugin-form-builder'
 
 export default buildConfig({
@@ -95,7 +95,7 @@ The form submission will be forwarded to ERPNext according to the workflow.
 ### Plugin options
 
 ```typescript
-import { erpnextPlugin } from '@ivarse/payload-erpnext-plugin'
+import { erpnextPlugin } from 'payload-erpnext-plugin'
 
 erpnextPlugin({
   // Disable the anonymous file upload endpoint if you handle uploads elsewhere

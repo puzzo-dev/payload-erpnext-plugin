@@ -1,4 +1,4 @@
-import type { Endpoint } from 'payload'
+import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { decryptCredential } from '../utils/erpnextCrypto';
 
@@ -52,7 +52,7 @@ export const fetchDocTypesEndpoint: Endpoint = {
             }
 
             const sites = await req.payload.find({
-                collection: 'sites' as 'users',
+                collection: 'sites' as unknown as CollectionSlug,
                 where: siteId ? { id: { equals: siteId } } : { slug: { equals: siteSlug } } as any,
                 limit: 1,
                 depth: 0,
@@ -65,7 +65,7 @@ export const fetchDocTypesEndpoint: Endpoint = {
             }
 
             const configs = await req.payload.find({
-                collection: 'erpnext-config' as 'users',
+                collection: 'erpnext-config' as unknown as CollectionSlug,
                 where: { site: { equals: site.id }, isActive: { equals: true } },
                 limit: 1,
                 depth: 0,

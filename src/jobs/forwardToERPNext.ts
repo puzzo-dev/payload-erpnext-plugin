@@ -1,4 +1,4 @@
-import type { TaskConfig } from 'payload'
+import type { TaskConfig, CollectionSlug } from 'payload'
 import { executeERPNextWorkflows } from '../lib/executeERPNextWorkflows'
 import { randomUUID } from 'crypto'
 
@@ -25,7 +25,7 @@ export const forwardToERPNext = {
 
         // Fetch the submission and its data
         const submission = await req.payload.findByID({
-            collection: 'form-submissions' as 'users',
+            collection: 'form-submissions' as unknown as CollectionSlug,
             id: input.submissionId,
             depth: 0,
             overrideAccess: true,
