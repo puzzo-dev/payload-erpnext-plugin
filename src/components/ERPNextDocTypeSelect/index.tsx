@@ -90,4 +90,5 @@ const ERPNextDocTypeSelect: React.FC = () => {
     )
 }
 
+export { ERPNextDocTypeSelect }
 export default ERPNextDocTypeSelect

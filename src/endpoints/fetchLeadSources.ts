@@ -1,4 +1,4 @@
-import type { Endpoint } from 'payload'
+import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { decryptCredential } from '../utils/erpnextCrypto';
 import type { ERPNextLeadSource } from '../types';
@@ -76,7 +76,7 @@ export const fetchLeadSourcesEndpoint: Endpoint = {
             // ── Resolve credentials ────────────────────────────────────
             if (configId) {
                 const config = await req.payload.findByID({
-                    collection: 'erpnext-config' as 'users',
+                    collection: 'erpnext-config' as unknown as CollectionSlug,
                     id: configId,
                     depth: 0,
                     overrideAccess: true,
@@ -143,7 +143,7 @@ export const fetchLeadSourcesEndpoint: Endpoint = {
             // ── Update the config document with results ────────────────
             if (configId) {
                 await req.payload.update({
-                    collection: 'erpnext-config' as 'users',
+                    collection: 'erpnext-config' as unknown as CollectionSlug,
                     id: configId,
                     data: {
                         availableLeadSources: leadSources,

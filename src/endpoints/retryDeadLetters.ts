@@ -1,4 +1,4 @@
-import type { Endpoint } from 'payload'
+import type { Endpoint, CollectionSlug } from 'payload'
 
 /**
  * POST /api/retry-dead-letters
@@ -32,7 +32,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
             }
 
             const pending = await req.payload.find({
-                collection: 'erpnext-dead-letters' as unknown as 'users',
+                collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                 where: where as any,
                 limit,
                 depth: 0,
@@ -58,7 +58,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
                     // re-resolve from the site's active ERPNextConfig
                     const siteId = dl.site as string | number
                     const configs = await req.payload.find({
-                        collection: 'erpnext-config' as unknown as 'users',
+                        collection: 'erpnext-config' as unknown as CollectionSlug,
                         where: {
                             site: { equals: siteId },
                             isActive: { equals: true },
@@ -95,7 +95,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
 
                     if (response.ok) {
                         await req.payload.update({
-                            collection: 'erpnext-dead-letters' as unknown as 'users',
+                            collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                             id,
                             req,
                             data: {
@@ -108,7 +108,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
                     } else {
                         const body = await response.text().catch(() => '(no body)')
                         await req.payload.update({
-                            collection: 'erpnext-dead-letters' as unknown as 'users',
+                            collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                             id,
                             req,
                             data: {
@@ -122,7 +122,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
                     }
                 } catch (err) {
                     await req.payload.update({
-                        collection: 'erpnext-dead-letters' as unknown as 'users',
+                        collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                         id,
                         req,
                         data: {

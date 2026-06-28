@@ -1,4 +1,5 @@
 import type { Access, PayloadRequest } from 'payload'
+import { timingSafeEqual } from 'node:crypto'
 
 /**
  * Minimal access control helpers used by the plugin.
@@ -27,7 +28,12 @@ export const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET
 export function isInternalAuth(req: { headers?: { get: (name: string) => string | null } } | PayloadRequest): boolean {
     if (!INTERNAL_API_SECRET) return false
     const authSecret = req.headers?.get('x-internal-auth')
-    return Boolean(authSecret && authSecret === INTERNAL_API_SECRET)
+    if (!authSecret) return false
+    // Constant-time comparison to prevent timing oracle attacks.
+    const a = Buffer.from(authSecret)
+    const b = Buffer.from(INTERNAL_API_SECRET)
+    if (a.byteLength !== b.byteLength) return false
+    return timingSafeEqual(a, b)
 }
 
 export const getUserOrgId = (user: UserWithRole): string | number | null => {

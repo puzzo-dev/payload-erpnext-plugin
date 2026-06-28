@@ -1,4 +1,4 @@
-import type { Payload } from 'payload'
+import type { Payload, CollectionSlug } from 'payload'
 import { randomUUID } from 'crypto'
 import type { ERPNextConfigDoc, RuntimeCollectionSlug } from '../types'
 
@@ -166,7 +166,7 @@ export async function executeERPNextWorkflows(options: ExecuteWorkflowsOptions):
 
         // 2. Find workflows for this form
         const workflows = await payload.find({
-            collection: 'erpnext-form-workflows' as RuntimeCollectionSlug as 'users',
+            collection: 'erpnext-form-workflows' as unknown as CollectionSlug,
             where: {
                 form: { equals: formId },
                 site: { equals: resolvedSiteId },
@@ -588,7 +588,7 @@ async function writeDeadLetter(
 ): Promise<void> {
     try {
         await payload.create({
-            collection: 'erpnext-dead-letters' as RuntimeCollectionSlug as 'users',
+            collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
             overrideAccess: true,
             data: data as any,
         })

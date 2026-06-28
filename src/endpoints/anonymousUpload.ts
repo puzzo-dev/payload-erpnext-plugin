@@ -1,4 +1,4 @@
-import type { Endpoint } from 'payload'
+import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB
@@ -57,7 +57,7 @@ export const anonymousUploadEndpoint: Endpoint = {
         const buffer = Buffer.from(arrayBuffer)
 
         const mediaDoc = await payload.create({
-            collection: 'media' as 'users',
+            collection: 'media' as unknown as CollectionSlug,
             data: {
                 alt: file.name,
                 ...(site ? { site } : {}),
