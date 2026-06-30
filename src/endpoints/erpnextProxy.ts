@@ -180,7 +180,7 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
         if (provided === internalKey) return { accessLevel: 'internal' } // Allowed
     }
 
-    const origin = req.headers.get('origin') || req.headers.get('referer') || req.headers.get('x-trusted-origin') || ''
+    const origin = req.headers.get('origin') || req.headers.get('referer') || ''
 
     // 2. Direct browser navigation with cookies: allow if the user has a valid
     // Payload admin session (req.user is populated by Payload middleware).

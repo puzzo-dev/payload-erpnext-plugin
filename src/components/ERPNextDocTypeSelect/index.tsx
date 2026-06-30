@@ -16,8 +16,8 @@ interface DocTypeOption {
  * available DocTypes from `/api/erpnext-doctypes`. Falls back to a plain text
  * input if no site is selected or the fetch fails.
  */
-const ERPNextDocTypeSelect: React.FC = () => {
-    const { value, setValue } = useField<string>({ path: 'doctype' })
+export const ERPNextDocTypeSelect: React.FC<{ path: string }> = ({ path }) => {
+    const { value, setValue } = useField<string>({ path })
     const { getData } = useForm()
     const [options, setOptions] = useState<DocTypeOption[]>([])
     const [loading, setLoading] = useState(false)
@@ -90,5 +90,4 @@ const ERPNextDocTypeSelect: React.FC = () => {
     )
 }
 
-export { ERPNextDocTypeSelect }
 export default ERPNextDocTypeSelect

@@ -379,8 +379,8 @@ export const ERPNextConfig: CollectionConfig = {
                                 description: 'Default ERPNext DocType to create from form submissions. Fetched live from the connected ERPNext site.',
                                 components: {
                                     Field: {
-                                        path: './components/ERPNextDocTypeSelect/index',
-                                        exportName: 'ERPNextDocTypeSelectField',
+                                        path: 'payload-erpnext-plugin/components/ERPNextDocTypeSelect',
+                                        exportName: 'ERPNextDocTypeSelect',
                                     },
                                 },
                             },
