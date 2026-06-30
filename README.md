@@ -1,16 +1,19 @@
 # payload-erpnext-plugin
 
-A self-contained **Payload CMS 3.x plugin** for bidirectional ERPNext integration.
+A self-contained **Payload CMS 3.x plugin** for secure, multi-tenant ERPNext integrations.
 
 It provides:
 
-- **ERPNext connection configuration** per site (multi-tenant)
-- **Multi-DocType form workflows** — define multiple ERPNext requests per form submission
-- **Hybrid sync/async forwarding** — validation errors returned immediately, transient failures retried via Payload Jobs
-- **Dead-letter queue** for permanently failed ERPNext requests
-- **Anonymous file upload** endpoint for form attachments (resumes, etc.)
-- **ERPNext proxy endpoints** for frontend use
-- **Live DocType picker** in the workflow builder, fetched from the site's ERPNext connection
+- **ERPNext Connection Configuration** per site (multi-tenant) with encrypted credentials.
+- **Generic ERP Action Handlers** (`erp-get`, `erp-post`, `erp-patch`, `erp-delete`) registered directly into the CMS workflow engine's action registry.
+- **Workflow Step Integration** — injects a `trigger_erp` (Trigger ERP Action) block into the CMS `workflows` collection steps, with custom field components for live DocType and target field selection.
+- **Dead-Letter Queue** (`erpnext-dead-letters` collection) for permanently failed ERPNext requests.
+- **Anonymous File Upload** endpoint for form attachments (e.g., resumes).
+- **Secure ERPNext Proxy Endpoints** (`/api/erpnext-proxy/...`) with rate-limiting, origin validation, and cross-tenant data isolation.
+- **Webhook Signature Verification** helper for validating incoming ERPNext notifications.
+
+> [!NOTE]
+> Form-submission-to-ERPNext forwarding is handled by the host application's general **Workflows** collection (e.g., triggered on `collection_change` for `form-submissions`) rather than a dedicated parallel engine.
 
 ---
 
@@ -19,14 +22,11 @@ It provides:
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
-- [ERPNext Form Workflows](#erpnext-form-workflows)
-- [How Forwarding Works](#how-forwarding-works)
-- [Error Handling](#error-handling)
+- [ERPNext Workflow Steps](#erpnext-workflow-steps)
+- [Security & Access Control](#security--access-control)
 - [Dead-Letter Queue](#dead-letter-queue)
 - [Endpoints](#endpoints)
-- [Security](#security)
 - [Architecture](#architecture)
-- [Troubleshooting](#troubleshooting)
 - [License](#license)
 
 ---
@@ -45,278 +45,160 @@ pnpm add payload-erpnext-plugin
 
 ### 1. Add the plugin to `payload.config.ts`
 
+Import and register `erpnextPlugin`, passing the host application's action registry to enable workflow execution:
+
 ```typescript
 import { buildConfig } from 'payload'
-import { erpnextPlugin, forwardToERPNext } from 'payload-erpnext-plugin'
-import { formBuilderPlugin } from '@payloadcms/plugin-form-builder'
+import { erpnextPlugin } from 'payload-erpnext-plugin'
+import { actionRegistry } from './lib/actionRegistry' // your host application's registry
 
 export default buildConfig({
   // ... your config
   plugins: [
-    formBuilderPlugin({
-      // ... your form builder options
-      formSubmissionOverrides: {
-        hooks: {
-          afterChange: [forwardToERPNext],
-        },
-      },
+    erpnextPlugin({
+      registry: actionRegistry,
     }),
-    erpnextPlugin(),
   ],
 })
 ```
 
-### 2. Create an `ERPNext Config` in the Payload admin
+### 2. Create an `ERPNext Config` in the Payload Admin
 
 Go to **Integrations → ERPNext Config**:
 
-- Select the site
-- Enter the ERPNext URL (HTTPS only)
-- Enter API Key and Secret
-- Fetch companies / lead sources
-- Save
+- Select the site/tenant.
+- Enter the ERPNext URL (HTTPS only).
+- Enter API Key and Secret.
+- Fetch companies / lead sources.
+- Mark as Active and Save.
 
-### 3. Create an `ERPNext Form Workflow`
+### 3. Build a Workflow Step
 
-Go to **Integrations → ERPNext Form Workflows**:
+Go to **Settings → Workflows**:
 
-- Select the form
-- Select the site
-- Add requests (DocType, action, field mappings)
-
-### 4. Submit a form
-
-The form submission will be forwarded to ERPNext according to the workflow.
+- Create or edit a workflow.
+- In **Steps**, add a **Trigger ERP Action** (`trigger_erp`) block.
+- Select the DocType and Action (e.g., `POST` to create, `GET` to search).
+- Map fields from the CMS document context using `{{doc.fieldName}}` variables.
 
 ---
 
 ## Configuration
 
-### Plugin options
+### Plugin Options
 
 ```typescript
 import { erpnextPlugin } from 'payload-erpnext-plugin'
 
 erpnextPlugin({
-  // Disable the anonymous file upload endpoint if you handle uploads elsewhere
-  enableAnonymousUpload: false,
+  registry: actionRegistry, // ActionRegistryRef
+  enableAnonymousUpload: false, // optional, defaults to true
+  erpnextConfigHooks: {
+    afterChange: [myConnectionMonitorHook], // optional connection monitors
+  },
 })
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enableAnonymousUpload` | `boolean` | `true` | Register `/api/anonymous-upload` for form file attachments. |
+| `registry` | `ActionRegistryRef` | `undefined` | **Recommended**. The action registry to register `erp-get`, `erp-post`, `erp-patch`, and `erp-delete` handlers. |
+| `enableAnonymousUpload` | `boolean` | `true` | Registers `/api/anonymous-upload` for form file attachments. |
+| `erpnextConfigHooks` | `object` | `undefined` | Appends custom `afterChange` hooks to the `erpnext-config` collection. |
 
-### Environment variables
+### Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ERPNEXT_ENCRYPTION_KEY` | Recommended | 32-byte hex AES-256-GCM key for credential encryption. Generate with `openssl rand -hex 32`. |
+| `ERPNEXT_ENCRYPTION_KEY` | **Required** | 32-byte hex AES-256-GCM key for encrypting credentials at rest. Generate with `openssl rand -hex 32`. |
 | `REDIS_URL` | Optional | Enables Redis-backed rate limiting. Recommended for horizontal scaling. |
 
 ---
 
-## ERPNext Form Workflows
+## ERPNext Workflow Steps
 
-A workflow is a sequence of ERPNext requests that run when a form submission is created.
+The plugin automatically extends the host's `workflows` collection steps with the **Trigger ERP Action** (`trigger_erp`) block.
 
-### Workflow fields
-
-- **Label**: Friendly name
-- **Form**: Triggering Payload form
-- **Site**: ERPNext site connection to use
-- **Enabled**: Turn the workflow on/off
-
-### Request fields
+### Step Fields
 
 | Field | Description |
 |-------|-------------|
-| Position | Execution order (ascending) |
-| Label | e.g. "Create Lead" |
-| DocType | ERPNext DocType (fetched live from the site connection) |
-| Action | `create`, `get`, or `update` |
-| Reference Key | Store the result so later requests can reference it |
-| Reference Path | Path to extract from the ERPNext response (default `data.name`) |
-| Condition | Optional JS expression; request runs only if truthy |
-| Optional | For `get`/`update`: treat "not found" as success |
-| Field Mappings | Map Payload form fields to ERPNext fields |
-| Static Values | Hard-coded ERPNext field values |
-| Reference Mappings | Map values from earlier Reference Keys into ERPNext fields |
-| Filters | For `get`/`update`: query filters to find the ERPNext document |
+| **DocType** | ERPNext DocType (fetched live using a custom `ERPNextDocTypeSelect` component). |
+| **Action** | `Read / Search (GET)`, `Create (POST)`, `Update (PUT)`, or `Delete (DELETE)`. |
+| **Result Key** | The namespace prefix for output variables (e.g. `erp` → `{{erp_name}}`, `{{erp_result}}`). Prevents overwriting earlier step contexts. |
+| **Field Mappings** | Map target fields to source values. The target field input uses `ERPNextTargetFieldSelect` to display fields fetched dynamically from the selected DocType. |
 
-### Example: e-commerce order
+### Field Mapping Rules
 
-1. **Get Customer** by phone (optional, reference key `customer`)
-2. **Get Lead** by phone (optional, reference key `lead`)
-3. **Create Lead** if `!references.lead`
-4. **Create Customer** if `!references.customer`
-5. **Create Sales Order** with `customer` mapped from `references.customer`
-
-This prevents duplicate customer records and dead customers.
+* **For GET Actions**: Map source expressions into `filters` and `fields` target keys. E.g.
+  * `filters` → `[["phone", "=", "{{doc.phone}}"]]`
+  * `fields` → `["name", "customer_name", "status"]`
+* **For POST/PUT Actions**: Map target ERPNext field names to values or variables (e.g. `customer_name` → `{{doc.fullName}}`).
 
 ---
 
-## How Forwarding Works
+## Security & Access Control
 
-The `forwardToERPNext` hook runs **synchronously** on every new `form-submission` create:
-
-1. Resolves the parent form and site.
-2. Loads active ERPNext workflows for that form + site.
-3. Runs the workflow executor.
-4. If **all requests succeed**, the submission returns normally.
-5. If a request fails with **4xx validation error**, the submission is rejected and the ERPNext error message is returned to the frontend.
-6. If a request fails with **transient error** (5xx, timeout, network), a Payload Job is queued for retry and the submission still returns success.
-
-### Payload Jobs
-
-The plugin registers a `forwardToERPNext` task in Payload Jobs. On transient failure, the hook enqueues:
-
-```json
-{
-  "task": "forwardToERPNext",
-  "input": {
-    "submissionId": "...",
-    "formId": "...",
-    "siteId": "..."
-  }
-}
-```
-
-Failed jobs appear in the Payload admin under **Jobs**, where they can be retried or inspected.
-
-### Legacy fallback
-
-If no workflow exists for a form, the plugin falls back to the legacy single-DocType behavior defined on the site's `ERPNext Config` (`defaultDocType` + field mappings).
-
----
-
-## Error Handling
-
-ERPNext error responses are parsed to extract the real message:
-
-- `message`
-- `exception`
-- `_server_messages`
-- `exc`
-
-If the response body is JSON and contains one of these, the frontend receives that exact message. Otherwise, the HTTP category is returned.
-
-Example frontend error:
-
-```json
-{
-  "message": "ERPNext validation failed: Create Lead (Lead): Mobile Number is not a valid Indian mobile number"
-}
-```
+- **HTTPS Mandatory**: The plugin refuses to forward credentials or request payloads to non-HTTPS endpoints.
+- **Credential Encryption**: Secrets and keys are encrypted using AES-256-GCM before writing to the database. They are only decrypted in memory during execution.
+- **Cross-Tenant Isolation**: In multi-tenant environments, the proxy restricts list fetches and single resource requests to the `company` configured on the tenant's active `ERPNext Config`. Any attempt to request cross-tenant data is blocked.
+- **Doctype Whitelisting**: Frontend clients accessing the proxy can only query whitelisted, non-sensitive doctypes (e.g., `Job Opening`, `Blog Category`).
+- **Origin Validation**: Proxy endpoints reject browser requests unless the origin matches a domain registered in the `sites` collection or configured in `TRUSTED_ORIGINS`.
 
 ---
 
 ## Dead-Letter Queue
 
-Permanently failed ERPNext requests (after retries) are written to the `erpnext-dead-letters` collection with:
+Failed ERPNext calls from workflows are written to the `erpnext-dead-letters` collection:
 
-- Original submission ID
-- Site
-- ERPNext URL and DocType
-- Payload sent
-- Error category and detail
-- HTTP status
-- Retry count
-- Correlation ID
-- Workflow / request label
-
-Admins can review dead letters and retry them manually via the **Retry Dead Letters** endpoint.
+- **Original Context**: Submission ID, site, URL, DocType, and the request payload.
+- **Diagnostics**: Error category (validation, connection, timeout), details, HTTP status code, retry count, and workflow correlation ID.
+- **Recovery**: Administrators can review, debug, and trigger manual retries via the **Retry Dead Letters** endpoint.
 
 ---
 
 ## Endpoints
 
-The plugin registers the following endpoints:
+All admin endpoints require `super-admin` or `admin` authentication.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/erpnext/submit` | Proxy to create an ERPNext document |
-| `GET`  | `/api/erpnext/resource/:doctype/:name` | Proxy to read an ERPNext document |
-| `GET`  | `/api/erpnext/health` | ERPNext connection health check |
-| `POST` | `/api/erpnext/upload` | Proxy file upload to ERPNext |
-| `POST` | `/api/erpnext-config/fetch-companies` | Fetch companies from ERPNext |
-| `GET`  | `/api/erpnext-doctypes` | Fetch DocTypes from ERPNext for a site |
-| `POST` | `/api/erpnext-config/fetch-lead-sources` | Fetch lead sources from ERPNext |
-| `POST` | `/api/erpnext/retry-dead-letters` | Retry failed dead letters |
-| `POST` | `/api/anonymous-upload` | Anonymous file upload to Payload Media |
-
-All admin endpoints require a logged-in user with `super-admin` or `admin` role.
-
----
-
-## Security
-
-- **HTTPS only**: ERPNext URLs must start with `https://`.
-- **Credential encryption**: API keys and secrets are encrypted at rest with `ERPNEXT_ENCRYPTION_KEY`.
-- **Rate limiting**: Admin endpoints are rate-limited per IP.
-- **Access control**: ERPNext collections default to `super-admin`/`admin`/`editor` site-scoped access. Override via your own access functions if needed.
-- **TLS errors**: Network/TLS failures are written to the dead-letter queue instead of leaking details.
+| `POST` | `/api/erpnext-proxy/submit` | Proxies creation of whitelisted DocTypes (e.g. Leads) from frontends. |
+| `GET`  | `/api/erpnext-proxy/resource` | Proxies reading/filtering of whitelisted DocTypes. |
+| `GET`  | `/api/erpnext-proxy/health` | Verifies ERPNext API credentials and connection. |
+| `POST` | `/api/erpnext-proxy/upload` | Proxies file uploads to ERPNext. |
+| `POST` | `/api/erpnext-config/fetch-companies` | Live dropdown population: fetches ERPNext Company list. |
+| `POST` | `/api/erpnext-config/fetch-lead-sources` | Live dropdown population: fetches ERPNext Lead Source list. |
+| `GET`  | `/api/erpnext-doctypes` | Live dropdown population: fetches ERPNext DocType list. |
+| `GET`  | `/api/erpnext-doctype-fields` | Live dropdown population: fetches fields for a selected DocType. |
+| `POST` | `/api/erpnext/retry-dead-letters` | Retries dead-letter queue items. |
+| `POST` | `/api/anonymous-upload` | Anonymous file upload to Payload Media. |
 
 ---
 
 ## Architecture
 
 ```
-Payload Form Submission
-        │
-        ▼
-forwardToERPNext hook (sync)
-        │
-        ├─ 4xx validation error ──► reject submission, return to frontend
-        │
-        ├─ 5xx/timeout/network ──► enqueue Payload Job
-        │
-        └─ success ──► submission saved
-        │
-        ▼
-executeERPNextWorkflows
-        │
-        ├─ find workflows for form + site
-        │
-        ├─ run each request in position order
-        │   ├─ field mappings
-        │   ├─ static values
-        │   ├─ reference mappings
-        │   └─ store reference result
-        │
-        └─ write dead letter on permanent failure
+                 Workflow Trigger (e.g. collection change)
+                                   │
+                                   ▼
+                       Action Registry Lookup
+                                   │
+                        ┌──────────┴──────────┐
+                        ▼                     ▼
+                 Action Executed       Action Fails (Transient)
+                 (API Call Ok)                │
+                        │                     ▼
+                        │             Enqueue retry job
+                        │                     │
+                        │            ┌────────┴────────┐
+                        │            ▼                 ▼
+                        │       Retry Ok          Exhausted (All retries fail)
+                        │            │                 │
+                        ▼            ▼                 ▼
+                 ┌──────────────────────┐     ┌──────────────────────┐
+                 │  Execution Completed │     │  Write to Dead Letter│
+                 └──────────────────────┘     └──────────────────────┘
 ```
-
----
-
-## Troubleshooting
-
-### "No active ERPNext config for site"
-
-Create an ERPNext Config for the site and set it to active.
-
-### "ERPNext credentials are masked or invalid"
-
-The credentials read from the database are masked. Ensure `ERPNEXT_ENCRYPTION_KEY` matches the key used to encrypt them. If the key changed, re-save the credentials in the admin.
-
-### DocType dropdown is empty
-
-- Select a site in the workflow document first.
-- Ensure the site has an active ERPNext Config.
-- Check the ERPNext URL is HTTPS and reachable.
-- Check the browser network tab for `/api/erpnext-doctypes` errors.
-
-### Jobs are not retrying
-
-Ensure Payload Jobs are enabled in your `payload.config.ts`:
-
-```typescript
-jobs: {
-  tasks: [],
-}
-```
-
-The plugin adds its task automatically.
 
 ---
 
