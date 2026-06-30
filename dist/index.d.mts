@@ -1,69 +1,4 @@
-import { CollectionAfterChangeHook, Payload, Endpoint, PayloadRequest, Plugin } from 'payload';
-
-/**
- * ERPNext Form-Submission Forwarder (hybrid sync/async)
- *
- * For each new Payload form submission:
- *  1. Runs ERPNext workflows synchronously so validation errors (4xx) can be
- *     returned to the frontend immediately.
- *  2. On transient failures (timeout, 5xx, network), enqueues a Payload Job
- *     for retry instead of blocking the submission.
- *  3. Falls back to the legacy single-DocType behavior if no workflows exist.
- */
-declare const forwardToERPNext$1: CollectionAfterChangeHook;
-
-interface WorkflowResult {
-    ok: boolean;
-    requestLabel: string;
-    doctype: string;
-    action: string;
-    referenceKey?: string;
-    referenceValue?: string;
-    erpName?: string;
-    status?: number;
-    error?: string;
-}
-interface ExecuteWorkflowsOptions {
-    payload: Payload;
-    formId: string | number;
-    siteId: string | number;
-    submissionId: string | number;
-    submissionData: Array<{
-        field: string;
-        value: string;
-    }>;
-    correlationId: string;
-    log: (level: 'info' | 'warn' | 'error', msg: string, meta?: Record<string, unknown>) => void;
-}
-declare function executeERPNextWorkflows(options: ExecuteWorkflowsOptions): Promise<WorkflowResult[]>;
-
-/**
- * Payload Job: forwardToERPNext
- *
- * Asynchronously executes ERPNext workflows for a form submission.
- * This job is queued by the form-submission afterChange hook so that ERPNext
- * forwarding does not block the HTTP response and can be retried independently.
- */
-declare const forwardToERPNext: {
-    slug: string;
-    inputSchema: {
-        name: string;
-        type: string;
-        required: boolean;
-    }[];
-    handler: ({ input, req }: any) => Promise<{
-        output: {};
-    }>;
-};
-
-/**
- * Enqueue ERPNext forwarding as a Payload Job.
- *
- * Instead of calling ERPNext synchronously in the form-submission hook,
- * we queue a background job. This keeps the submission response fast and
- * lets Payload retry failed forwards automatically via the jobs UI.
- */
-declare const enqueueForwardToERPNext: CollectionAfterChangeHook;
+import { Endpoint, PayloadRequest, Plugin } from 'payload';
 
 interface ERPNextCredentials {
     url: string;
@@ -83,25 +18,48 @@ declare function authHeaders(creds: ERPNextCredentials): {
     Authorization: string;
 };
 
+/** Minimal interface for the CMS action registry. The plugin registers into it without importing the full CMS type. */
+interface ActionRegistryRef {
+    register: (slug: string, handler: (ctx: any) => Promise<{
+        success: boolean;
+        data?: Record<string, unknown>;
+        error?: string;
+    }>) => void;
+}
 interface ERPNextPluginOptions {
     /** Disable the anonymous file upload endpoint if you handle files elsewhere */
     enableAnonymousUpload?: boolean;
+    /**
+     * CMS action registry — pass `actionRegistry` from `payload-cms/src/lib/actionRegistry`.
+     * When provided, the plugin registers all ERP CRUD actions so they can be invoked by
+     * the workflow engine.
+     */
+    registry?: ActionRegistryRef;
+    /**
+     * External afterChange hooks to be appended to the erpnext-config collection.
+     * Use this from the CMS to add connection monitoring without creating a circular
+     * dependency (e.g. pass `erpnextConnectionMonitorHook` from the CMS).
+     */
+    erpnextConfigHooks?: {
+        afterChange?: ((args: any) => any)[];
+    };
 }
 /**
  * ERPNext Plugin for Payload CMS
  *
  * Provides:
  *  - ERPNext connection configuration (per site)
- *  - Multi-doctype form workflows
+ *  - generic erp-get/erp-post/erp-patch/erp-delete actions for the CMS
+ *    automation engine's Workflows collection (trigger_erp blocks)
  *  - Dead-letter queue for failed forwards
- *  - Background Payload Job for async ERPNext forwarding
  *  - Anonymous file upload endpoint for form attachments
  *  - ERPNext proxy endpoints
  *
- * To enable automatic forwarding on form submissions, import the exported
- * `forwardToERPNext` hook and add it to your form-submission collection's
- * `afterChange` hooks. The plugin does not modify the form-submission
- * collection directly to avoid coupling with any specific form builder.
+ * Form-submission-to-ERPNext forwarding is handled by the host app's own
+ * Workflows (trigger: collection_change, collections: ['form-submissions']) —
+ * not by this plugin. The plugin previously shipped a parallel form-workflow
+ * forwarder (forwardToERPNext/ERPNextFormWorkflows); it was removed since it
+ * duplicated the CMS automation engine.
  */
 declare function erpnextPlugin(options?: ERPNextPluginOptions): Plugin;
 
@@ -119,4 +77,4 @@ declare function erpnextPlugin(options?: ERPNextPluginOptions): Plugin;
  */
 declare function verifyERPNextWebhookSignature(rawBody: string, signature: string, secret: string, encoding?: 'hex' | 'base64'): boolean;
 
-export { type ERPNextCredentials, type ERPNextPluginOptions, authHeaders, enqueueForwardToERPNext, erpnextPlugin, executeERPNextWorkflows, forwardToERPNext$1 as forwardToERPNext, forwardToERPNext as forwardToERPNextJob, getCredentials, verifyERPNextWebhookSignature };
+export { type ActionRegistryRef, type ERPNextCredentials, type ERPNextPluginOptions, authHeaders, erpnextPlugin, getCredentials, verifyERPNextWebhookSignature };

@@ -18,47 +18,53 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/components/ERPNextDocTypeSelect/index.tsx
-var ERPNextDocTypeSelect_exports = {};
-__export(ERPNextDocTypeSelect_exports, {
-  ERPNextDocTypeSelect: () => ERPNextDocTypeSelect,
-  default: () => ERPNextDocTypeSelect_default
+// src/components/ERPNextTargetFieldSelect/index.tsx
+var ERPNextTargetFieldSelect_exports = {};
+__export(ERPNextTargetFieldSelect_exports, {
+  ERPNextTargetFieldSelect: () => ERPNextTargetFieldSelect,
+  default: () => ERPNextTargetFieldSelect_default
 });
-module.exports = __toCommonJS(ERPNextDocTypeSelect_exports);
+module.exports = __toCommonJS(ERPNextTargetFieldSelect_exports);
 var import_react = require("react");
 var import_ui = require("@payloadcms/ui");
 var import_jsx_runtime = require("react/jsx-runtime");
-var ERPNextDocTypeSelect = ({ path }) => {
+var ERPNextTargetFieldSelect = ({ path }) => {
   const { value, setValue } = (0, import_ui.useField)({ path });
   const { getData } = (0, import_ui.useForm)();
   const [options, setOptions] = (0, import_react.useState)([]);
   const [loading, setLoading] = (0, import_react.useState)(false);
   const [error, setError] = (0, import_react.useState)(null);
   (0, import_react.useEffect)(() => {
+    const parts = path.split(".");
+    const blockIndex = parts.findIndex((p) => p === "steps") + 1;
+    const blockNum = parts[blockIndex];
     const data = getData();
-    const siteId = typeof data.site === "object" && data.site !== null ? data.site.id : data.site;
+    const siteObj = data?.site;
+    const siteId = typeof siteObj === "object" && siteObj !== null ? siteObj.id : siteObj;
+    const doctype = data?.steps?.[blockNum]?.doctype;
     if (!siteId) {
       setOptions([]);
-      setError("Select a site to load DocTypes from ERPNext.");
+      setError("Select a site first.");
+      return;
+    }
+    if (!doctype) {
+      setOptions([]);
+      setError("Select an ERPNext DocType first.");
       return;
     }
     setLoading(true);
     setError(null);
-    fetch(`/api/erpnext-doctypes?siteId=${siteId}`).then(async (res) => {
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
+    fetch(`/api/erpnext-doctype-fields?siteId=${siteId}&doctype=${doctype}`).then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     }).then((json) => {
-      setOptions(json.doctypes ?? []);
+      setOptions(json.fields ?? []);
     }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to load DocTypes");
-      setOptions([]);
+      setError(err.message);
     }).finally(() => setLoading(false));
-  }, [getData]);
+  }, [getData, path]);
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { marginBottom: "1rem" }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { style: { display: "block", marginBottom: "0.25rem", fontWeight: 600 }, children: "ERPNext DocType" }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "field-label", style: { display: "block", marginBottom: "0.25rem", fontWeight: 600 }, children: "ERPNext Target Field" }),
     error && !options.length && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: "var(--theme-warning-500, #f59e0b)", fontSize: "0.85rem", marginBottom: "0.5rem" }, children: error }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "select",
@@ -75,19 +81,20 @@ var ERPNextDocTypeSelect = ({ path }) => {
           color: "var(--theme-text, #111)"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "", children: loading ? "Loading DocTypes\u2026" : "Select a DocType" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "", children: loading ? "Loading fields\u2026" : "Select a Field" }),
           options.map((opt) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: opt.value, children: [
             opt.label,
-            " ",
-            opt.module ? `\u2014 ${opt.module}` : ""
+            " (",
+            opt.value,
+            ")"
           ] }, opt.value))
         ]
       }
     )
   ] });
 };
-var ERPNextDocTypeSelect_default = ERPNextDocTypeSelect;
+var ERPNextTargetFieldSelect_default = ERPNextTargetFieldSelect;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  ERPNextDocTypeSelect
+  ERPNextTargetFieldSelect
 });

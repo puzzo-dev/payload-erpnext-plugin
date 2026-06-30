@@ -7,6 +7,8 @@ import React from 'react';
  * available DocTypes from `/api/erpnext-doctypes`. Falls back to a plain text
  * input if no site is selected or the fetch fails.
  */
-declare const ERPNextDocTypeSelect: React.FC;
+declare const ERPNextDocTypeSelect: React.FC<{
+    path: string;
+}>;
 
 export { ERPNextDocTypeSelect, ERPNextDocTypeSelect as default };

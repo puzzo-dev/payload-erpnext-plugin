@@ -39,10 +39,27 @@ export const anonymousUploadEndpoint: Endpoint = {
         }
 
         const file = formData.get('file') as File | null
-        const site = formData.get('site') as string | null
+        const siteRaw = formData.get('site') as string | null
 
         if (!file || !(file instanceof File) || file.size === 0) {
             return Response.json({ error: 'No file provided' }, { status: 400 })
+        }
+
+        // Validate that the provided site slug actually exists before using
+        // overrideAccess:true — an unvalidated site would let any caller
+        // attach media to an arbitrary tenant.
+        let site: string | null = null
+        if (siteRaw) {
+            const siteCheck = await payload.find({
+                collection: 'sites' as unknown as CollectionSlug,
+                where: { slug: { equals: siteRaw } },
+                limit: 1,
+                overrideAccess: true,
+            })
+            if (siteCheck.totalDocs === 0) {
+                return Response.json({ error: 'Invalid site' }, { status: 400 })
+            }
+            site = siteRaw
         }
 
         if (file.size > MAX_FILE_SIZE) {

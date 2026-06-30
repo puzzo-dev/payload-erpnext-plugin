@@ -31,11 +31,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   authHeaders: () => authHeaders,
-  enqueueForwardToERPNext: () => enqueueForwardToERPNext,
   erpnextPlugin: () => erpnextPlugin,
-  executeERPNextWorkflows: () => executeERPNextWorkflows,
-  forwardToERPNext: () => forwardToERPNext2,
-  forwardToERPNextJob: () => forwardToERPNext,
   getCredentials: () => getCredentials,
   verifyERPNextWebhookSignature: () => verifyERPNextWebhookSignature
 });
@@ -484,8 +480,8 @@ var ERPNextConfig = {
                 description: "Default ERPNext DocType to create from form submissions. Fetched live from the connected ERPNext site.",
                 components: {
                   Field: {
-                    path: "./components/ERPNextDocTypeSelect/index",
-                    exportName: "ERPNextDocTypeSelectField"
+                    path: "payload-erpnext-plugin/components/ERPNextDocTypeSelect",
+                    exportName: "ERPNextDocTypeSelect"
                   }
                 }
               }
@@ -666,243 +662,6 @@ var ERPNextDeadLetter = {
   timestamps: true
 };
 
-// src/collections/ERPNextFormWorkflows.ts
-var ERPNextFormWorkflows = {
-  slug: "erpnext-form-workflows",
-  admin: {
-    useAsTitle: "label",
-    defaultColumns: ["label", "form", "site", "enabled", "updatedAt"],
-    group: "Integrations"
-  },
-  access: {
-    read: siteScopedRead(),
-    create: siteScopedCreate,
-    update: siteScopedUpdate(),
-    delete: siteScopedDelete()
-  },
-  fields: [
-    {
-      name: "label",
-      type: "text",
-      required: true,
-      admin: { description: 'e.g. "Avril Booking \u2192 Lead + Event Booking"' }
-    },
-    {
-      name: "form",
-      type: "relationship",
-      relationTo: "forms",
-      required: true,
-      admin: { description: "The Payload form that triggers this workflow" }
-    },
-    {
-      type: "row",
-      fields: [
-        {
-          name: "site",
-          type: "relationship",
-          relationTo: "sites",
-          required: true,
-          admin: { width: "70%" }
-        },
-        {
-          name: "enabled",
-          type: "checkbox",
-          defaultValue: true,
-          admin: { width: "30%" }
-        }
-      ]
-    },
-    organizationField(),
-    {
-      name: "requests",
-      type: "array",
-      required: true,
-      admin: {
-        description: "Requests run in ascending position order. A later request can use values produced by an earlier request by referencing its Reference Key."
-      },
-      fields: [
-        {
-          type: "row",
-          fields: [
-            {
-              name: "position",
-              type: "number",
-              required: true,
-              defaultValue: 1,
-              admin: { width: "15%", description: "Execution order" }
-            },
-            {
-              name: "label",
-              type: "text",
-              required: true,
-              admin: { width: "35%", description: 'e.g. "Create Lead"' }
-            },
-            {
-              name: "doctype",
-              type: "text",
-              required: true,
-              admin: {
-                width: "25%",
-                description: "ERPNext DocType fetched from the site connection.",
-                components: {
-                  Field: {
-                    path: "./components/ERPNextDocTypeSelect/index",
-                    exportName: "ERPNextDocTypeSelectField"
-                  }
-                }
-              }
-            },
-            {
-              name: "action",
-              type: "select",
-              required: true,
-              defaultValue: "create",
-              options: [
-                { label: "Create", value: "create" },
-                { label: "Get", value: "get" },
-                { label: "Update", value: "update" }
-              ],
-              admin: { width: "25%" }
-            }
-          ]
-        },
-        {
-          name: "enabled",
-          type: "checkbox",
-          defaultValue: true,
-          admin: { description: "Uncheck to skip this request without removing it" }
-        },
-        {
-          name: "referenceKey",
-          type: "text",
-          admin: {
-            description: `Key used to store this request's result so later requests can reference it (e.g. "lead"). Leave blank to ignore the result.`
-          }
-        },
-        {
-          name: "referencePath",
-          type: "text",
-          defaultValue: "data.name",
-          admin: {
-            description: "Path to the value extracted from the ERPNext response and stored under Reference Key (e.g. data.name, message.name)."
-          }
-        },
-        {
-          name: "condition",
-          type: "text",
-          admin: {
-            description: "Optional JS expression evaluated against the submission and prior results. Skip request if falsy. Example: values.event_date && values.guest_count"
-          }
-        },
-        {
-          name: "optional",
-          type: "checkbox",
-          defaultValue: false,
-          admin: {
-            description: 'For get/update: a "not found" response is treated as success and does not create a dead letter. Later requests can test references.{referenceKey} to decide whether to create the record.'
-          }
-        },
-        {
-          name: "fieldMappings",
-          type: "array",
-          admin: { description: "Map form submission values to ERPNext fields" },
-          fields: [
-            {
-              name: "formFieldName",
-              type: "text",
-              required: true,
-              admin: { description: "Payload form field name (e.g. email, name)" }
-            },
-            {
-              name: "erpFieldName",
-              type: "text",
-              required: true,
-              admin: { description: "ERPNext field name (e.g. email_id, lead_name)" }
-            }
-          ]
-        },
-        {
-          name: "staticValues",
-          type: "array",
-          admin: { description: "Hard-coded ERPNext fields added to every request" },
-          fields: [
-            {
-              name: "field",
-              type: "text",
-              required: true,
-              admin: { description: "ERPNext field name" }
-            },
-            {
-              name: "value",
-              type: "text",
-              required: true,
-              admin: { description: "Static value" }
-            }
-          ]
-        },
-        {
-          name: "referenceMappings",
-          type: "array",
-          admin: { description: "Map values from earlier requests (by Reference Key) into ERPNext fields" },
-          fields: [
-            {
-              name: "referenceKey",
-              type: "text",
-              required: true,
-              admin: { description: "Reference key of an earlier request" }
-            },
-            {
-              name: "referencePath",
-              type: "text",
-              defaultValue: "name",
-              admin: { description: "Path within the stored result (e.g. name, data.name)" }
-            },
-            {
-              name: "erpFieldName",
-              type: "text",
-              required: true,
-              admin: { description: "ERPNext field name to receive the value" }
-            }
-          ]
-        },
-        {
-          name: "filters",
-          type: "array",
-          admin: { description: "For get/update: filters used to find the ERPNext document. Mapped like field mappings." },
-          fields: [
-            {
-              name: "formFieldName",
-              type: "text",
-              admin: { description: "Payload form field name (leave blank to use static value)" }
-            },
-            {
-              name: "staticValue",
-              type: "text",
-              admin: { description: "Static filter value" }
-            },
-            {
-              name: "erpFieldName",
-              type: "text",
-              required: true,
-              admin: { description: "ERPNext filter field" }
-            },
-            {
-              name: "operator",
-              type: "select",
-              defaultValue: "=",
-              options: [
-                { label: "Equals", value: "=" },
-                { label: "Like", value: "like" }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  timestamps: true
-};
-
 // src/utils/rateLimit.ts
 var import_ioredis = __toESM(require("ioredis"));
 var MAX_STORE_SIZE = 5e4;
@@ -1009,9 +768,22 @@ var anonymousUploadEndpoint = {
         return Response.json({ error: "Expected multipart/form-data" }, { status: 400 });
       }
       const file = formData.get("file");
-      const site = formData.get("site");
+      const siteRaw = formData.get("site");
       if (!file || !(file instanceof File) || file.size === 0) {
         return Response.json({ error: "No file provided" }, { status: 400 });
+      }
+      let site = null;
+      if (siteRaw) {
+        const siteCheck = await payload.find({
+          collection: "sites",
+          where: { slug: { equals: siteRaw } },
+          limit: 1,
+          overrideAccess: true
+        });
+        if (siteCheck.totalDocs === 0) {
+          return Response.json({ error: "Invalid site" }, { status: 400 });
+        }
+        site = siteRaw;
       }
       if (file.size > MAX_FILE_SIZE) {
         return Response.json({ error: `File exceeds ${MAX_FILE_SIZE / 1024 / 1024} MB limit` }, { status: 413 });
@@ -1168,7 +940,7 @@ async function validateProxyAccess(req) {
     const provided = req.headers.get("x-internal-key");
     if (provided === internalKey) return { accessLevel: "internal" };
   }
-  const origin = req.headers.get("origin") || req.headers.get("referer") || req.headers.get("x-trusted-origin") || "";
+  const origin = req.headers.get("origin") || req.headers.get("referer") || "";
   if (!origin && req.user) return { accessLevel: "admin" };
   if (origin) {
     const trustedHosts = /* @__PURE__ */ new Set(["localhost", "127.0.0.1"]);
@@ -1692,6 +1464,90 @@ var fetchDocTypesEndpoint = {
   }
 };
 
+// src/endpoints/fetchDocTypeFields.ts
+var FETCH_FIELDS_RATE_LIMIT_MAX = 30;
+var FETCH_FIELDS_RATE_LIMIT_WINDOW_MS = 6e4;
+var fetchDocTypeFieldsEndpoint = {
+  path: "/erpnext-doctype-fields",
+  method: "get",
+  handler: async (req) => {
+    try {
+      const user = req.user;
+      if (!user || !["super-admin", "admin"].includes(user.role || "")) {
+        return Response.json(
+          { error: "Authentication required" },
+          { status: 401 }
+        );
+      }
+      const ip = getClientIp(req);
+      const rateCheck = await checkRateLimit(
+        `fetch-doctype-fields:${ip}`,
+        FETCH_FIELDS_RATE_LIMIT_MAX,
+        FETCH_FIELDS_RATE_LIMIT_WINDOW_MS
+      );
+      if (!rateCheck.allowed) {
+        return Response.json(
+          { error: "Too many requests" },
+          { status: 429, headers: { "Retry-After": String(Math.ceil(rateCheck.retryAfterMs / 1e3)) } }
+        );
+      }
+      const siteId = req.query?.siteId;
+      const doctype = req.query?.doctype;
+      if (!siteId || !doctype) {
+        return Response.json({ error: "Provide siteId and doctype" }, { status: 400 });
+      }
+      const sites = await req.payload.find({
+        collection: "sites",
+        where: { id: { equals: siteId } },
+        limit: 1,
+        depth: 0,
+        overrideAccess: true
+      });
+      const site = sites.docs[0];
+      if (!site) return Response.json({ error: "Site not found" }, { status: 404 });
+      const configs = await req.payload.find({
+        collection: "erpnext-config",
+        where: { site: { equals: site.id }, isActive: { equals: true } },
+        limit: 1,
+        depth: 0,
+        overrideAccess: true,
+        context: { preventMasking: true }
+      });
+      const cfg = configs.docs[0];
+      if (!cfg) return Response.json({ error: "No active ERPNext config" }, { status: 400 });
+      const erpnextUrl = (cfg.erpnextUrl || "").replace(/\/+$/, "");
+      const apiKey = decryptCredential(cfg.apiKey || "");
+      const apiSecret = decryptCredential(cfg.apiSecret || "");
+      if (!apiKey || !apiSecret) return Response.json({ error: "Missing credentials" }, { status: 400 });
+      const fieldsUrl = `${erpnextUrl}/api/resource/DocField?filters=[["parent","=","${doctype}"]]&fields=["fieldname","label","fieldtype"]&limit_page_length=500`;
+      const response = await fetch(fieldsUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `token ${apiKey}:${apiSecret}`
+        },
+        signal: AbortSignal.timeout(15e3)
+      });
+      if (!response.ok) {
+        return Response.json({ error: `ERPNext returned HTTP ${response.status}` }, { status: 502 });
+      }
+      const result = await response.json();
+      const fields = (result.data ?? []).filter((f) => f.fieldname && f.fieldtype !== "Section Break" && f.fieldtype !== "Column Break").map((f) => ({
+        value: f.fieldname,
+        label: f.label || f.fieldname,
+        type: f.fieldtype
+      })).sort((a, b) => a.label.localeCompare(b.label));
+      return Response.json({ fields });
+    } catch (err) {
+      req.payload.logger.error(`[fetch-doctype-fields] Error: ${err}`);
+      return Response.json(
+        { error: err instanceof Error ? err.message : "Failed to fetch fields" },
+        { status: 500 }
+      );
+    }
+  }
+};
+
 // src/endpoints/fetchLeadSources.ts
 var RATE_LIMIT_MAX = 10;
 var RATE_LIMIT_WINDOW_MS = 6e4;
@@ -1927,618 +1783,157 @@ var retryDeadLettersEndpoint = {
   }
 };
 
-// src/lib/executeERPNextWorkflows.ts
+// src/actions/erpActions.ts
 var MAX_RETRIES = 3;
-var BASE_TIMEOUT_MS = 1e4;
-var RETRY_BACKOFF_MS = [0, 2e3, 8e3];
-var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function extractERPNextErrorMessage(body) {
-  try {
-    const parsed = JSON.parse(body);
-    if (typeof parsed.message === "string" && parsed.message) return parsed.message;
-    if (typeof parsed.exception === "string" && parsed.exception) return parsed.exception;
-    if (Array.isArray(parsed._server_messages) && parsed._server_messages.length > 0) {
-      return parsed._server_messages.join("; ");
-    }
-    if (typeof parsed.exc === "string" && parsed.exc) {
-      return parsed.exc.split("\n").slice(-2)[0] || parsed.exc;
-    }
-  } catch {
-  }
-  return null;
+var BASE_DELAY_MS = 1e3;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
-function categorizeError(status, err) {
-  if (err instanceof Error && err.name === "AbortError") {
-    return { category: "timeout", detail: "Request aborted after timeout" };
-  }
-  if (err instanceof TypeError) {
-    return { category: "tls-error", detail: String(err) };
-  }
-  if (status === void 0) {
-    return { category: "exception", detail: String(err) };
-  }
-  if (status >= 400 && status < 500) {
-    return { category: "client-error", detail: `HTTP ${status}` };
-  }
-  if (status >= 500) {
-    return { category: "server-error", detail: `HTTP ${status}` };
-  }
-  return { category: "exception", detail: `HTTP ${status}` };
-}
-function getByPath(obj, path) {
-  if (!path || !obj) return void 0;
-  return path.split(".").reduce((acc, key) => {
-    if (acc && typeof acc === "object" && key in acc) {
-      return acc[key];
-    }
-    return void 0;
-  }, obj);
-}
-function buildSubmissionMap(submissionData) {
-  const map = {};
-  for (const entry of submissionData ?? []) {
-    if (entry.field && entry.value !== void 0 && !entry.field.startsWith("_")) {
-      map[entry.field] = entry.value;
-    }
-  }
-  return map;
-}
-function evaluateCondition(condition, values, references) {
-  if (!condition || !condition.trim()) return true;
-  try {
-    const fn = new Function("values", "references", `return Boolean(${condition})`);
-    return fn(values, references) === true;
-  } catch (err) {
-    return true;
-  }
-}
-async function executeERPNextWorkflows(options) {
-  const { payload, formId, siteId, submissionId, submissionData, correlationId, log } = options;
-  const results = [];
-  try {
-    const resolvedSiteId = typeof siteId === "object" ? siteId.id : siteId;
-    const erpConfigs = await payload.find({
-      collection: "erpnext-config",
-      where: {
-        site: { equals: resolvedSiteId },
-        isActive: { equals: true }
-      },
-      limit: 1,
-      depth: 0,
-      overrideAccess: true,
-      context: { preventMasking: true }
-    });
-    if (erpConfigs.totalDocs === 0) {
-      log("info", "No active ERPNext config for site \u2014 skipping workflows", { siteId: resolvedSiteId });
-      return results;
-    }
-    const erpConfig = erpConfigs.docs[0];
-    const normalizedUrl = (erpConfig.erpnextUrl || "").replace(/\/+$/, "");
-    if (!normalizedUrl.startsWith("https://")) {
-      log("error", "Refusing to forward to non-HTTPS ERPNext URL", { url: normalizedUrl });
-      return results;
-    }
-    const apiKey = erpConfig.apiKey || "";
-    const apiSecret = erpConfig.apiSecret || "";
-    if (!apiKey || !apiSecret || apiKey.startsWith("\u2022\u2022\u2022\u2022") || apiSecret.startsWith("\u2022\u2022\u2022\u2022")) {
-      log("error", "ERPNext credentials are missing or masked");
-      return results;
-    }
-    const erpnextCompany = erpConfig.erpnextCompany || void 0;
-    const leadSource = erpConfig.leadSource || void 0;
-    const authHeader = `token ${apiKey}:${apiSecret}`;
-    const workflows = await payload.find({
-      collection: "erpnext-form-workflows",
-      where: {
-        form: { equals: formId },
-        site: { equals: resolvedSiteId },
-        enabled: { equals: true }
-      },
-      limit: 10,
-      depth: 0,
-      overrideAccess: true
-    });
-    if (workflows.totalDocs === 0) {
-      log("info", "No ERPNext workflows for form \u2014 using legacy single-DocType fallback", { formId });
-      const legacyResult = await executeLegacyForward({
-        payload,
-        erpConfig,
-        siteId: resolvedSiteId,
-        submissionId: String(submissionId),
-        submissionData,
-        correlationId,
-        log
-      });
-      if (legacyResult) results.push(legacyResult);
-      return results;
-    }
-    const values = buildSubmissionMap(submissionData);
-    const references = {};
-    for (const workflow of workflows.docs) {
-      const requests = [...workflow.requests || []].sort((a, b) => (a.position || 0) - (b.position || 0));
-      for (const request of requests) {
-        if (request.enabled === false) continue;
-        if (!evaluateCondition(request.condition, values, references)) {
-          log("info", `Skipping request "${request.label}" \u2014 condition falsy`, { requestLabel: request.label });
-          continue;
-        }
-        const result = {
-          ok: false,
-          requestLabel: request.label,
-          doctype: request.doctype,
-          action: request.action,
-          referenceKey: request.referenceKey || void 0
-        };
-        try {
-          const body = {};
-          for (const mapping of request.fieldMappings || []) {
-            const value = values[mapping.formFieldName];
-            if (value !== void 0) {
-              body[mapping.erpFieldName] = value;
-            }
-          }
-          for (const staticValue of request.staticValues || []) {
-            body[staticValue.field] = staticValue.value;
-          }
-          for (const refMapping of request.referenceMappings || []) {
-            const refValue = getByPath(references[refMapping.referenceKey], refMapping.referencePath || "name");
-            if (refValue !== void 0) {
-              body[refMapping.erpFieldName] = refValue;
-            }
-          }
-          if (erpnextCompany && !body.company) {
-            body.company = erpnextCompany;
-          }
-          if (leadSource && request.doctype === "Lead" && !body.source) {
-            body.source = leadSource;
-          }
-          let url;
-          let method;
-          if (request.action === "create") {
-            url = `${normalizedUrl}/api/resource/${encodeURIComponent(request.doctype)}`;
-            method = "POST";
-          } else if (request.action === "get") {
-            const filters = (request.filters || []).filter((f) => f.erpFieldName).map((f) => {
-              const value = f.formFieldName ? values[f.formFieldName] : f.staticValue;
-              return [request.doctype, f.erpFieldName, f.operator || "=", value];
-            });
-            const qs = new URLSearchParams();
-            qs.set("fields", JSON.stringify(["name"]));
-            if (filters.length > 0) qs.set("filters", JSON.stringify(filters));
-            qs.set("limit_page_length", "1");
-            url = `${normalizedUrl}/api/resource/${encodeURIComponent(request.doctype)}?${qs.toString()}`;
-            method = "GET";
-          } else {
-            const filterName = (request.filters || []).map((f) => {
-              const value = f.formFieldName ? values[f.formFieldName] : f.staticValue;
-              return { field: f.erpFieldName, value };
-            }).find((f) => f.field === "name")?.value;
-            const refName = request.referenceKey ? getByPath(references[request.referenceKey], request.referencePath || "name") : void 0;
-            const docName = filterName || refName;
-            if (!docName) {
-              throw new Error("Update action requires a document name via filters or referenceKey");
-            }
-            url = `${normalizedUrl}/api/resource/${encodeURIComponent(request.doctype)}/${encodeURIComponent(String(docName))}`;
-            method = "PUT";
-          }
-          log("info", `Executing ERPNext request`, {
-            workflow: workflow.label,
-            requestLabel: request.label,
-            doctype: request.doctype,
-            action: request.action,
-            url: url.replace(apiSecret, "***").replace(apiKey, "***")
-          });
-          let lastStatus;
-          let lastError;
-          let lastBody = "";
-          let responseData;
-          for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), BASE_TIMEOUT_MS);
-            try {
-              if (attempt > 0) {
-                log("info", `Retry attempt ${attempt + 1}/${MAX_RETRIES}`, { backoffMs: RETRY_BACKOFF_MS[attempt] });
-                await sleep(RETRY_BACKOFF_MS[attempt]);
-              }
-              const response = await fetch(url, {
-                method,
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: authHeader,
-                  "X-Correlation-ID": correlationId
-                },
-                body: method === "GET" ? void 0 : JSON.stringify(body),
-                signal: controller.signal
-              });
-              lastStatus = response.status;
-              lastBody = await response.text().catch(() => "(no body)");
-              if (response.ok) {
-                responseData = lastBody ? JSON.parse(lastBody) : {};
-                if (request.action === "get" || request.action === "update") {
-                  const list = Array.isArray(responseData?.data) ? responseData.data : void 0;
-                  const found = list ? list.length > 0 : responseData !== null && responseData !== void 0;
-                  if (!found && request.optional) {
-                    log("info", `Optional ${request.action} returned no match \u2014 treating as success`, {
-                      requestLabel: request.label
-                    });
-                    result.ok = true;
-                    result.status = response.status;
-                    break;
-                  }
-                  if (!found && !request.optional) {
-                    log("warn", `${request.action} returned no match`, { requestLabel: request.label });
-                    lastStatus = 404;
-                    lastBody = JSON.stringify({ message: "Document not found" });
-                    break;
-                  }
-                }
-                result.ok = true;
-                result.status = response.status;
-                break;
-              }
-              log("warn", `HTTP ${response.status} from ERPNext`, {
-                status: response.status,
-                bodyPreview: lastBody.slice(0, 500),
-                attempt: attempt + 1
-              });
-              if (response.status >= 400 && response.status < 500) break;
-            } catch (err) {
-              lastError = err;
-              log("warn", `Network exception on attempt ${attempt + 1}`, { error: String(err) });
-            } finally {
-              clearTimeout(timeout);
-            }
-          }
-          if (!result.ok) {
-            const { category, detail } = categorizeError(lastStatus, lastError);
-            const erpMessage = extractERPNextErrorMessage(lastBody);
-            result.error = erpMessage || `${category}: ${detail}`;
-            await writeDeadLetter(payload, {
-              submissionId: String(submissionId),
-              site: resolvedSiteId,
-              erpnextUrl: normalizedUrl,
-              docType: request.doctype,
-              payload: body,
-              errorCategory: category,
-              errorDetail: `${detail}
-
-Last body:
-${lastBody.slice(0, 2e3)}`,
-              httpStatus: lastStatus ?? null,
-              retryCount: MAX_RETRIES,
-              status: "pending",
-              correlationId,
-              workflow: workflow.label,
-              requestLabel: request.label
-            });
-          } else {
-            if (request.referenceKey) {
-              const listData = Array.isArray(responseData?.data) ? responseData.data : void 0;
-              const normalized = request.action === "get" && listData && listData.length > 0 ? listData[0] : responseData;
-              const path = request.referencePath || (request.action === "get" ? "name" : "data.name");
-              const extracted = getByPath(normalized, path);
-              references[request.referenceKey] = normalized;
-              result.referenceValue = extracted !== void 0 ? String(extracted) : void 0;
-              result.erpName = extracted !== void 0 ? String(extracted) : void 0;
-              log("info", `Stored reference`, { referenceKey: request.referenceKey, value: result.referenceValue });
-            }
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          result.error = msg;
-          log("error", `Request "${request.label}" failed with exception`, { error: msg });
-          await writeDeadLetter(payload, {
-            submissionId: String(submissionId),
-            site: resolvedSiteId,
-            erpnextUrl: normalizedUrl,
-            docType: request.doctype,
-            payload: {},
-            errorCategory: "exception",
-            errorDetail: msg,
-            httpStatus: null,
-            retryCount: 0,
-            status: "pending",
-            correlationId,
-            workflow: workflow.label,
-            requestLabel: request.label
-          });
-        }
-        results.push(result);
-      }
-    }
-  } catch (err) {
-    log("error", "Unexpected error executing ERPNext workflows", { error: err instanceof Error ? err.message : String(err) });
-  }
-  return results;
-}
-async function executeLegacyForward(args) {
-  const { payload, erpConfig, siteId, submissionId, submissionData, correlationId, log } = args;
-  const normalizedUrl = (erpConfig.erpnextUrl || "").replace(/\/+$/, "");
-  if (!normalizedUrl.startsWith("https://")) {
-    log("error", "Refusing to forward to non-HTTPS ERPNext URL", { url: normalizedUrl });
-    return null;
-  }
-  const apiKey = erpConfig.apiKey || "";
-  const apiSecret = erpConfig.apiSecret || "";
-  if (apiKey.startsWith("\u2022\u2022\u2022\u2022") || apiSecret.startsWith("\u2022\u2022\u2022\u2022")) {
-    log("error", "ERPNext credentials are masked or invalid in database.");
-    return null;
-  }
-  const docType = erpConfig.defaultDocType === "Custom" ? erpConfig.customDocType : erpConfig.defaultDocType;
-  if (!docType) {
-    log("warn", "No legacy DocType configured \u2014 skipping forward");
-    return null;
-  }
-  const values = buildSubmissionMap(submissionData);
-  let erpPayload = {};
-  const fieldMappings = erpConfig.fieldMappings;
-  if (fieldMappings && fieldMappings.length > 0) {
-    for (const mapping of fieldMappings) {
-      const value = values[mapping.formFieldName];
-      if (value !== void 0) {
-        erpPayload[mapping.erpnextFieldName] = value;
-      }
-    }
-  } else {
-    log("warn", "No field mappings configured \u2014 forwarding raw field names", { formFields: Object.keys(values) });
-    erpPayload = { ...values };
-  }
-  if (erpConfig.erpnextCompany && !erpPayload.company) {
-    erpPayload.company = erpConfig.erpnextCompany;
-  }
-  if (erpConfig.leadSource && docType === "Lead" && !erpPayload.source) {
-    erpPayload.source = erpConfig.leadSource;
-  }
-  const url = `${normalizedUrl}/api/resource/${encodeURIComponent(docType)}`;
-  const authHeader = `token ${apiKey}:${apiSecret}`;
-  log("info", "Forwarding submission (legacy fallback)", { url, docType, submissionId });
-  let lastStatus;
+async function erpCall(creds, path, method = "GET", body) {
   let lastError;
-  let lastBody = "";
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), BASE_TIMEOUT_MS);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      if (attempt > 0) {
-        log("info", `Retry attempt ${attempt + 1}/${MAX_RETRIES}`, { backoffMs: RETRY_BACKOFF_MS[attempt] });
-        await sleep(RETRY_BACKOFF_MS[attempt]);
-      }
-      const response = await fetch(url, {
-        method: "POST",
+      const res = await fetch(`${creds.url}${path}`, {
+        method,
         headers: {
-          "Content-Type": "application/json",
-          Authorization: authHeader,
-          "X-Correlation-ID": correlationId
+          ...authHeaders(creds),
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify(erpPayload),
-        signal: controller.signal
+        body: body ? JSON.stringify(body) : void 0,
+        signal: AbortSignal.timeout(3e4)
       });
-      lastStatus = response.status;
-      if (response.ok) {
-        const result = await response.json().catch(() => ({}));
-        log("info", `Created ${docType} successfully`, {
-          name: result?.data?.name || "ok",
-          attempt: attempt + 1
-        });
-        return {
-          ok: true,
-          requestLabel: "Legacy forward",
-          doctype: docType,
-          action: "create",
-          status: response.status
-        };
+      if (!res.ok) {
+        let msg = `ERPNext ${method} ${path} \u2192 ${res.status}`;
+        try {
+          const data = await res.json();
+          if (data?.exception) msg = String(data.exception);
+          else if (data?.message) msg = String(data.message);
+        } catch {
+        }
+        throw new Error(msg);
       }
-      lastBody = await response.text().catch(() => "(no body)");
-      log("warn", `HTTP ${response.status} from ERPNext`, {
-        status: response.status,
-        bodyPreview: lastBody.slice(0, 500),
-        attempt: attempt + 1
-      });
-      if (response.status >= 400 && response.status < 500) break;
+      return res.json();
     } catch (err) {
-      lastError = err;
-      log("warn", `Network exception on attempt ${attempt + 1}`, { error: String(err) });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-  const { category, detail } = categorizeError(lastStatus, lastError);
-  const erpMessage = extractERPNextErrorMessage(lastBody);
-  log("error", "All legacy retry attempts exhausted \u2014 writing dead letter", { category, detail });
-  await writeDeadLetter(payload, {
-    submissionId,
-    site: siteId,
-    erpnextUrl: normalizedUrl,
-    docType,
-    payload: erpPayload,
-    errorCategory: category,
-    errorDetail: `${detail}
-
-Last body:
-${lastBody.slice(0, 2e3)}`,
-    httpStatus: lastStatus ?? null,
-    retryCount: MAX_RETRIES,
-    status: "pending",
-    correlationId,
-    workflow: "Legacy fallback",
-    requestLabel: "Legacy forward"
-  });
-  return {
-    ok: false,
-    requestLabel: "Legacy forward",
-    doctype: docType,
-    action: "create",
-    status: lastStatus,
-    error: erpMessage || `${category}: ${detail}`
-  };
-}
-async function writeDeadLetter(payload, data) {
-  try {
-    await payload.create({
-      collection: "erpnext-dead-letters",
-      overrideAccess: true,
-      data
-    });
-  } catch (err) {
-    payload.logger.error(`[ERPNext] Failed to create dead-letter record: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-// src/jobs/forwardToERPNext.ts
-var import_crypto2 = require("crypto");
-var forwardToERPNext = {
-  slug: "forwardToERPNext",
-  inputSchema: [
-    { name: "submissionId", type: "text", required: true },
-    { name: "formId", type: "text", required: true },
-    { name: "siteId", type: "text", required: true }
-  ],
-  handler: async ({ input, req }) => {
-    const correlationId = (0, import_crypto2.randomUUID)();
-    const log = (level, msg, meta) => {
-      const metaStr = meta ? ` ${JSON.stringify(meta)}` : "";
-      req.payload.logger[level](`[ERPNext][${correlationId}] ${msg}${metaStr}`);
-    };
-    const submission = await req.payload.findByID({
-      collection: "form-submissions",
-      id: input.submissionId,
-      depth: 0,
-      overrideAccess: true
-    }).catch((err) => {
-      log("error", "Failed to fetch form submission", { error: String(err) });
-      return null;
-    });
-    if (!submission) {
-      throw new Error(`Form submission ${input.submissionId} not found`);
-    }
-    const results = await executeERPNextWorkflows({
-      payload: req.payload,
-      formId: input.formId,
-      siteId: input.siteId,
-      submissionId: input.submissionId,
-      submissionData: submission.submissionData,
-      correlationId,
-      log
-    });
-    const failed = results.filter((r) => !r.ok);
-    if (failed.length > 0) {
-      log("error", "One or more ERPNext workflow requests failed", { failed });
-      throw new Error(`ERPNext workflow failed: ${failed.map((f) => f.requestLabel).join(", ")}`);
-    }
-    return {
-      output: {}
-    };
-  }
-};
-
-// src/hooks/forwardToERPNext.ts
-var import_payload = require("payload");
-var import_crypto3 = require("crypto");
-var forwardToERPNext2 = async ({
-  doc,
-  operation,
-  req
-}) => {
-  if (operation !== "create") return doc;
-  const correlationId = (0, import_crypto3.randomUUID)();
-  const log = (level, msg, meta) => {
-    const metaStr = meta ? ` ${JSON.stringify(meta)}` : "";
-    req.payload.logger[level](`[ERPNext][${correlationId}] ${msg}${metaStr}`);
-  };
-  try {
-    const formRef = doc.form;
-    if (!formRef) return doc;
-    const formId = typeof formRef === "object" ? formRef.id : formRef;
-    const form = await req.payload.findByID({
-      collection: "forms",
-      id: formId,
-      depth: 0,
-      req
-    }).catch(() => null);
-    const siteId = form?.site;
-    if (!siteId) return doc;
-    const resolvedSiteId = typeof siteId === "object" ? siteId.id : siteId;
-    const results = await executeERPNextWorkflows({
-      payload: req.payload,
-      formId,
-      siteId: resolvedSiteId,
-      submissionId: doc.id,
-      submissionData: doc.submissionData,
-      correlationId,
-      log
-    });
-    const failed = results.filter((r) => !r.ok);
-    if (failed.length === 0) return doc;
-    const validationErrors = failed.filter((r) => r.status && r.status >= 400 && r.status < 500);
-    const transientErrors = failed.filter((r) => !r.status || r.status >= 500 || r.error?.includes("timeout") || r.error?.includes("tls-error"));
-    if (validationErrors.length > 0) {
-      const messages = validationErrors.map((r) => `${r.requestLabel} (${r.doctype}): ${r.error}`).join("; ");
-      log("warn", "ERPNext validation errors \u2014 rejecting submission", { messages });
-      throw new import_payload.APIError(`ERPNext validation failed: ${messages}`, 400);
-    }
-    if (transientErrors.length > 0) {
-      try {
-        await req.payload.jobs.queue({
-          task: "forwardToERPNext",
-          input: {
-            submissionId: String(doc.id),
-            formId: String(formId),
-            siteId: String(resolvedSiteId)
-          },
-          queue: "default",
-          req
-        });
-        log("info", "Queued ERPNext forward job for retry", { transientErrors });
-      } catch (err) {
-        log("error", "Failed to enqueue ERPNext retry job", { error: String(err) });
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < MAX_RETRIES) {
+        await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
       }
     }
-  } catch (err) {
-    if (err instanceof import_payload.APIError) throw err;
-    req.payload.logger.error(`[ERPNext][${correlationId}] Unexpected outer error: ${err}`);
   }
-  return doc;
-};
-
-// src/hooks/enqueueForwardToERPNext.ts
-var enqueueForwardToERPNext = async ({
-  doc,
-  operation,
-  req
-}) => {
-  if (operation !== "create") return doc;
-  const formRef = doc.form;
-  if (!formRef) return doc;
-  const formId = typeof formRef === "object" ? formRef.id : formRef;
-  const form = await req.payload.findByID({
-    collection: "forms",
-    id: formId,
-    depth: 0,
-    req
-  }).catch(() => null);
-  const siteId = form?.site;
-  if (!siteId) return doc;
-  const resolvedSiteId = typeof siteId === "object" ? siteId.id : siteId;
-  try {
-    await req.payload.jobs.queue({
-      task: "forwardToERPNext",
-      input: {
-        submissionId: String(doc.id),
-        formId: String(formId),
-        siteId: String(resolvedSiteId)
-      },
-      queue: "default",
-      req
+  throw lastError;
+}
+function dottedPathLookup(ctx, path) {
+  return path.split(".").reduce((o, k) => o === void 0 || o === null ? void 0 : o[k], ctx);
+}
+function resolveValue(template, ctx) {
+  const wholeMatch = template.trim().match(/^\{\{\s*([\w.]+)\s*\}\}$/);
+  if (wholeMatch) {
+    const val = dottedPathLookup(ctx, wholeMatch[1]);
+    return val !== void 0 ? val : template;
+  }
+  if (template.includes("{{")) {
+    return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key) => {
+      const val = dottedPathLookup(ctx, key);
+      return val !== void 0 && val !== null ? String(val) : "";
     });
-  } catch (err) {
-    req.payload.logger.error(`[ERPNext] Failed to enqueue forward job: ${err instanceof Error ? err.message : String(err)}`);
   }
-  return doc;
-};
+  return template;
+}
+async function erpGetHandler(ctx) {
+  const { payload, workflowContext, step } = ctx;
+  const siteSlug = workflowContext.siteSlug;
+  const creds = await getCredentials(payload, siteSlug);
+  if (!creds) return { success: false, error: "Missing ERP credentials for site: " + siteSlug };
+  const doctype = step.target_doctype;
+  if (!doctype) return { success: false, error: "erp-get requires target_doctype" };
+  const mapping = step.field_mapping ?? {};
+  const filters = mapping.filters ? String(resolveValue(String(mapping.filters), workflowContext)) : void 0;
+  const fields = mapping.fields ? String(resolveValue(String(mapping.fields), workflowContext)) : '["name"]';
+  const qs = new URLSearchParams({ fields, limit_page_length: "10" });
+  if (filters) qs.set("filters", filters);
+  const res = await erpCall(creds, `/api/resource/${encodeURIComponent(doctype)}?${qs}`);
+  const list = res.data ?? [];
+  const prefix = step.result_key || "erp";
+  return {
+    success: true,
+    data: {
+      [`${prefix}_result_list`]: list,
+      [`${prefix}_result`]: list[0] ?? null,
+      [`${prefix}_name`]: list[0]?.name ?? null,
+      erp_company: creds.company
+    }
+  };
+}
+async function erpPostHandler(ctx) {
+  const { payload, workflowContext, step } = ctx;
+  const siteSlug = workflowContext.siteSlug;
+  const creds = await getCredentials(payload, siteSlug);
+  if (!creds) return { success: false, error: "Missing ERP credentials for site: " + siteSlug };
+  const doctype = step.target_doctype;
+  if (!doctype) return { success: false, error: "erp-post requires target_doctype" };
+  const mapping = step.field_mapping ?? {};
+  const docData = { doctype };
+  for (const [erpField, sourceTemplate] of Object.entries(mapping)) {
+    docData[erpField] = resolveValue(sourceTemplate, workflowContext);
+  }
+  const res = await erpCall(creds, `/api/resource/${encodeURIComponent(doctype)}`, "POST", docData);
+  const createdName = res.data?.name;
+  const prefix = step.result_key || "erp";
+  return { success: true, data: { [`${prefix}_name`]: createdName, [`${prefix}_doctype`]: doctype, erp_company: creds.company } };
+}
+async function erpPatchHandler(ctx) {
+  const { payload, workflowContext, step } = ctx;
+  const siteSlug = workflowContext.siteSlug;
+  const creds = await getCredentials(payload, siteSlug);
+  if (!creds) return { success: false, error: "Missing ERP credentials for site: " + siteSlug };
+  const doctype = step.target_doctype;
+  if (!doctype) return { success: false, error: "erp-patch requires target_doctype" };
+  const mapping = step.field_mapping ?? {};
+  const docNameKey = mapping.doc_name_key ?? "erp_name";
+  const docName = workflowContext[docNameKey];
+  if (!docName) {
+    return { success: false, error: `erp-patch requires context.${docNameKey} to identify the document` };
+  }
+  const docData = {};
+  for (const [erpField, sourceTemplate] of Object.entries(mapping)) {
+    if (erpField === "doc_name_key") continue;
+    docData[erpField] = resolveValue(sourceTemplate, workflowContext);
+  }
+  await erpCall(
+    creds,
+    `/api/resource/${encodeURIComponent(doctype)}/${encodeURIComponent(docName)}`,
+    "PUT",
+    docData
+  );
+  return { success: true };
+}
+async function erpDeleteHandler(ctx) {
+  const { payload, workflowContext, step } = ctx;
+  const siteSlug = workflowContext.siteSlug;
+  const creds = await getCredentials(payload, siteSlug);
+  if (!creds) return { success: false, error: "Missing ERP credentials for site: " + siteSlug };
+  const doctype = step.target_doctype;
+  if (!doctype) return { success: false, error: "erp-delete requires target_doctype" };
+  const docName = workflowContext.erp_name;
+  if (!docName) return { success: false, error: "erp-delete requires context.erp_name" };
+  await erpCall(
+    creds,
+    `/api/resource/${encodeURIComponent(doctype)}/${encodeURIComponent(docName)}`,
+    "DELETE"
+  );
+  return { success: true };
+}
 
 // src/index.ts
 function erpnextPlugin(options = {}) {
   const enableAnonymousUpload = options.enableAnonymousUpload !== false;
+  if (options.registry) {
+    const r = options.registry;
+    r.register("erp-get", erpGetHandler);
+    r.register("erp-post", erpPostHandler);
+    r.register("erp-patch", erpPatchHandler);
+    r.register("erp-delete", erpDeleteHandler);
+  }
   return (config) => {
     const endpoints = [
       ...config.endpoints || [],
@@ -2548,20 +1943,104 @@ function erpnextPlugin(options = {}) {
       erpnextProxyUpload,
       fetchCompaniesEndpoint,
       fetchDocTypesEndpoint,
+      fetchDocTypeFieldsEndpoint,
       fetchLeadSourcesEndpoint,
       retryDeadLettersEndpoint
     ];
     if (enableAnonymousUpload) {
       endpoints.push(anonymousUploadEndpoint);
     }
+    const erpnextConfigCollection = options.erpnextConfigHooks?.afterChange?.length ? {
+      ...ERPNextConfig,
+      hooks: {
+        ...ERPNextConfig.hooks,
+        afterChange: [
+          ...ERPNextConfig.hooks?.afterChange ?? [],
+          ...options.erpnextConfigHooks.afterChange
+        ]
+      }
+    } : ERPNextConfig;
+    const modifiedCollections = (config.collections || []).map((collection) => {
+      if (collection.slug === "workflows") {
+        const systemEventField = collection.fields.find((f) => f.name === "system_event_name");
+        if (systemEventField && systemEventField.type === "select") {
+          systemEventField.options = [
+            ...systemEventField.options || [],
+            { label: "ERPNext Connection Failed", value: "erpnext.connection.failed" },
+            { label: "ERPNext Sync Failed", value: "erpnext.sync.failed" }
+          ];
+        }
+        const stepsField = collection.fields.find((f) => f.name === "steps");
+        if (stepsField && stepsField.type === "blocks") {
+          stepsField.blocks = [
+            ...stepsField.blocks || [],
+            {
+              slug: "trigger_erp",
+              labels: { singular: "Trigger ERP Action", plural: "Trigger ERP Actions" },
+              fields: [
+                {
+                  name: "doctype",
+                  type: "text",
+                  required: true,
+                  admin: {
+                    description: "ERPNext DocType (e.g. Customer, Sales Order)",
+                    components: { Field: "payload-erpnext-plugin/components/ERPNextDocTypeSelect" }
+                  }
+                },
+                {
+                  name: "action",
+                  type: "select",
+                  required: true,
+                  options: [
+                    { label: "Read / Search (GET)", value: "GET" },
+                    { label: "Create (POST)", value: "POST" },
+                    { label: "Update (PUT)", value: "PUT" },
+                    { label: "Delete (DELETE)", value: "DELETE" }
+                  ]
+                },
+                {
+                  name: "result_key",
+                  type: "text",
+                  defaultValue: "erp",
+                  admin: {
+                    description: `Prefix for this step's output context keys (e.g. "erp" \u2192 {{erp_name}}, {{erp_result}}). Use a distinct prefix per step when a workflow calls ERPNext more than once, so a later step doesn't overwrite an earlier one's result.`
+                  }
+                },
+                {
+                  name: "field_mapping",
+                  type: "array",
+                  labels: { singular: "Field Mapping", plural: "Field Mappings" },
+                  admin: {
+                    description: 'For GET: use "filters" and "fields" as the field names (ERPNext filter/fields JSON, supports {{var}}). For POST/PUT: ERPNext field name \u2192 value.'
+                  },
+                  fields: [
+                    {
+                      name: "target_field",
+                      type: "text",
+                      required: true,
+                      admin: {
+                        components: { Field: "payload-erpnext-plugin/components/ERPNextTargetFieldSelect" }
+                      }
+                    },
+                    {
+                      name: "source_field",
+                      type: "text",
+                      required: true,
+                      admin: { description: "Static value or variable (e.g. {{doc.status}})" }
+                    }
+                  ]
+                }
+              ]
+            }
+          ];
+        }
+      }
+      return collection;
+    });
     return {
       ...config,
-      collections: [...config.collections || [], ERPNextConfig, ERPNextFormWorkflows, ERPNextDeadLetter],
-      endpoints,
-      jobs: {
-        ...config.jobs || {},
-        tasks: [...config.jobs?.tasks || [], forwardToERPNext]
-      }
+      collections: [...modifiedCollections, erpnextConfigCollection, ERPNextDeadLetter],
+      endpoints
     };
   };
 }
@@ -2574,11 +2053,7 @@ function verifyERPNextWebhookSignature(rawBody, signature, secret, encoding = "h
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   authHeaders,
-  enqueueForwardToERPNext,
   erpnextPlugin,
-  executeERPNextWorkflows,
-  forwardToERPNext,
-  forwardToERPNextJob,
   getCredentials,
   verifyERPNextWebhookSignature
 });
