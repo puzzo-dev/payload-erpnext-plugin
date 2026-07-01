@@ -85,6 +85,12 @@ export async function getCredentials(
         const leadSource = (cfg.leadSource as string) || undefined
 
         if (!url || !rawKey || !rawSecret) return null
+        try {
+            const parsed = new URL(url)
+            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
+        } catch {
+            return null
+        }
         if (isMasked(rawKey) || isMasked(rawSecret)) {
             // The user-stripping approach should prevent this, but if masking still
             // leaks through for any reason, fail closed rather than using masked creds.
@@ -323,6 +329,7 @@ export const erpnextProxySubmit: Endpoint = {
             }
 
             const encodedDoctype = encodeURIComponent(doctype)
+            if (!/^https?:\/\//i.test(creds.url)) return Response.json({ error: 'ERPNext integration not configured' }, { status: 500 })
             const response = await fetch(`${creds.url}/api/resource/${encodedDoctype}`, {
                 method: 'POST',
                 headers: authHeaders(creds),
@@ -404,6 +411,7 @@ export const erpnextProxyResource: Endpoint = {
             }
 
             const encodedDoctype = encodeURIComponent(doctype)
+            if (!/^https?:\/\//i.test(creds.url)) return Response.json({ error: 'ERPNext integration not configured' }, { status: 500 })
             const endpoint = name
                 ? `${creds.url}/api/resource/${encodedDoctype}/${encodeURIComponent(name)}`
                 : `${creds.url}/api/resource/${encodedDoctype}`
@@ -456,6 +464,7 @@ export const erpnextProxyHealth: Endpoint = {
             if (!creds) {
                 return Response.json({ healthy: false, reason: 'No active ERPNext config found' })
             }
+            if (!/^https?:\/\//i.test(creds.url)) return Response.json({ healthy: false, reason: 'ERPNext integration not configured' })
 
             const response = await fetch(`${creds.url}/api/resource/User?limit_page_length=1`, {
                 method: 'GET',
@@ -504,6 +513,7 @@ export const erpnextProxyUpload: Endpoint = {
             if (!creds) {
                 return Response.json({ error: 'ERPNext integration not configured' }, { status: 500 });
             }
+            if (!/^https?:\/\//i.test(creds.url)) return Response.json({ error: 'ERPNext integration not configured' }, { status: 500 });
 
             const erpFormData = new FormData();
             erpFormData.append('file', file);
