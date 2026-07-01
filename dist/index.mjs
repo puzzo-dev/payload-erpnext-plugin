@@ -841,6 +841,12 @@ async function getCredentials(payload, siteSlug, req) {
     const company = cfg.erpnextCompany || void 0;
     const leadSource = cfg.leadSource || void 0;
     if (!url || !rawKey || !rawSecret) return null;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    } catch {
+      return null;
+    }
     if (isMasked(rawKey) || isMasked(rawSecret)) {
       payload.logger.error(
         `[ERPNext-Proxy] Credential masking leaked through for config ${cfg.id}. This indicates a Payload framework bug. Failing closed \u2014 do NOT fall back to raw SQL.`
@@ -1021,6 +1027,7 @@ var erpnextProxySubmit = {
         submitData.source = creds.leadSource;
       }
       const encodedDoctype = encodeURIComponent(doctype);
+      if (!/^https?:\/\//i.test(creds.url)) return Response.json({ error: "ERPNext integration not configured" }, { status: 500 });
       const response = await fetch(`${creds.url}/api/resource/${encodedDoctype}`, {
         method: "POST",
         headers: authHeaders(creds),
@@ -1089,6 +1096,7 @@ var erpnextProxyResource = {
         params.append("filters", filters);
       }
       const encodedDoctype = encodeURIComponent(doctype);
+      if (!/^https?:\/\//i.test(creds.url)) return Response.json({ error: "ERPNext integration not configured" }, { status: 500 });
       const endpoint = name ? `${creds.url}/api/resource/${encodedDoctype}/${encodeURIComponent(name)}` : `${creds.url}/api/resource/${encodedDoctype}`;
       const qs = params.toString() ? `?${params}` : "";
       const response = await fetch(`${endpoint}${qs}`, {
@@ -1128,6 +1136,7 @@ var erpnextProxyHealth = {
       if (!creds) {
         return Response.json({ healthy: false, reason: "No active ERPNext config found" });
       }
+      if (!/^https?:\/\//i.test(creds.url)) return Response.json({ healthy: false, reason: "ERPNext integration not configured" });
       const response = await fetch(`${creds.url}/api/resource/User?limit_page_length=1`, {
         method: "GET",
         headers: authHeaders(creds),
@@ -1166,6 +1175,7 @@ var erpnextProxyUpload = {
       if (!creds) {
         return Response.json({ error: "ERPNext integration not configured" }, { status: 500 });
       }
+      if (!/^https?:\/\//i.test(creds.url)) return Response.json({ error: "ERPNext integration not configured" }, { status: 500 });
       const erpFormData = new FormData();
       erpFormData.append("file", file);
       erpFormData.append("doctype", doctype);
