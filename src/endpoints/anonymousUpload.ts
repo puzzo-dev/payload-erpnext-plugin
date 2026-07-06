@@ -9,6 +9,27 @@ const ALLOWED_MIME_TYPES = [
 ]
 
 /**
+ * Verify the file's actual leading bytes match its declared MIME type. The client
+ * `file.type` header is attacker-controlled, so a caller could declare
+ * "application/pdf" while uploading active content (e.g. an SVG/HTML file named
+ * *.svg) which mediaServe would later serve executable. Magic-byte checks close
+ * that bypass.
+ *   PDF  → "%PDF-"                      (25 50 44 46 2D)
+ *   DOC  → OLE2 compound file           (D0 CF 11 E0 A1 B1 1A E1)
+ *   DOCX → ZIP local file header "PK.." (50 4B 03 04 / 05 06 / 07 08)
+ */
+function magicMatchesMime(buffer: Buffer, mime: string): boolean {
+    const startsWith = (sig: number[]) => sig.every((b, i) => buffer[i] === b)
+    if (mime === 'application/pdf') return startsWith([0x25, 0x50, 0x44, 0x46, 0x2d])
+    if (mime === 'application/msword') return startsWith([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
+    if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        return buffer[0] === 0x50 && buffer[1] === 0x4b &&
+            (buffer[2] === 0x03 || buffer[2] === 0x05 || buffer[2] === 0x07)
+    }
+    return false
+}
+
+/**
  * Anonymous file upload endpoint.
  *
  * Accepts a multipart file upload, validates size and type, and creates a
@@ -72,6 +93,11 @@ export const anonymousUploadEndpoint: Endpoint = {
 
         const arrayBuffer = await file.arrayBuffer()
         const buffer = Buffer.from(arrayBuffer)
+
+        // Enforce that the actual bytes match the declared (allowlisted) type.
+        if (!magicMatchesMime(buffer, file.type)) {
+            return Response.json({ error: 'File content does not match its declared type' }, { status: 415 })
+        }
 
         const mediaDoc = await payload.create({
             collection: 'media' as unknown as CollectionSlug,

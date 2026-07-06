@@ -1,4 +1,5 @@
 import type { Endpoint, CollectionSlug } from 'payload'
+import { getUserOrgId, getUserSiteId, type UserWithRole } from '../types'
 
 /**
  * POST /api/retry-dead-letters
@@ -14,7 +15,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
     path: '/retry-dead-letters',
     method: 'post',
     handler: async (req) => {
-        const user = req.user as unknown as { role?: string } | undefined
+        const user = req.user as unknown as UserWithRole | undefined
         if (!user || !['super-admin', 'admin'].includes(user.role || '')) {
             return Response.json({ error: 'Unauthorized' }, { status: 403 })
         }
@@ -24,16 +25,51 @@ export const retryDeadLettersEndpoint: Endpoint = {
         const siteSlug = url.searchParams.get('site') ?? undefined
 
         try {
-            // Fetch pending dead letters
-            const where: Record<string, unknown> = { status: { equals: 'pending' } }
+            // Resolve an optional ?site=slug into an ID (the `site` filter was previously a
+            // documented no-op, so an admin could retry EVERY tenant's dead letters).
+            let requestedSiteId: string | number | undefined
             if (siteSlug) {
-                // Note: querying by site slug requires a join; simplified here to site ID lookup
-                // In production, use a direct site filter if the relationship supports it
+                const s = await req.payload.find({
+                    collection: 'sites' as unknown as CollectionSlug,
+                    where: { slug: { equals: siteSlug } },
+                    limit: 1, depth: 0, overrideAccess: true, req,
+                })
+                if (s.totalDocs === 0) return Response.json({ error: 'Unknown site' }, { status: 404 })
+                requestedSiteId = (s.docs[0] as { id: string | number }).id
+            }
+
+            const andConditions: Record<string, unknown>[] = [{ status: { equals: 'pending' } }]
+
+            // Tenant scoping: super-admins may target any/all sites; admins are confined
+            // to the sites within their own organization.
+            if (user.role !== 'super-admin') {
+                const orgId = getUserOrgId(user)
+                const ownSiteId = getUserSiteId(user)
+                let allowedSiteIds: (string | number)[] = []
+                if (ownSiteId != null) {
+                    allowedSiteIds = [ownSiteId]
+                } else if (orgId != null) {
+                    const orgSites = await req.payload.find({
+                        collection: 'sites' as unknown as CollectionSlug,
+                        where: { organization: { equals: orgId } },
+                        limit: 1000, depth: 0, overrideAccess: true, req,
+                    })
+                    allowedSiteIds = orgSites.docs.map((d) => (d as { id: string | number }).id)
+                }
+                if (allowedSiteIds.length === 0) {
+                    return Response.json({ error: 'No sites in your scope' }, { status: 403 })
+                }
+                if (requestedSiteId != null && !allowedSiteIds.some((id) => String(id) === String(requestedSiteId))) {
+                    return Response.json({ error: 'Site is outside your organization' }, { status: 403 })
+                }
+                andConditions.push({ site: { in: requestedSiteId != null ? [requestedSiteId] : allowedSiteIds } })
+            } else if (requestedSiteId != null) {
+                andConditions.push({ site: { equals: requestedSiteId } })
             }
 
             const pending = await req.payload.find({
                 collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
-                where: where as any,
+                where: { and: andConditions } as any,
                 limit,
                 depth: 0,
                 req,

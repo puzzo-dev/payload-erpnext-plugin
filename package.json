@@ -25,6 +25,26 @@
       "import": "./src/components/ERPNextTargetFieldSelect/index.tsx",
       "require": "./src/components/ERPNextTargetFieldSelect/index.tsx",
       "default": "./src/components/ERPNextTargetFieldSelect/index.tsx"
+    },
+    "./components/CompanySelect": {
+      "import": "./src/components/CompanySelect/index.tsx",
+      "require": "./src/components/CompanySelect/index.tsx",
+      "default": "./src/components/CompanySelect/index.tsx"
+    },
+    "./components/LeadSourceSelect": {
+      "import": "./src/components/LeadSourceSelect/index.tsx",
+      "require": "./src/components/LeadSourceSelect/index.tsx",
+      "default": "./src/components/LeadSourceSelect/index.tsx"
+    },
+    "./components/CmsCollectionSelect": {
+      "import": "./src/components/CmsCollectionSelect/index.tsx",
+      "require": "./src/components/CmsCollectionSelect/index.tsx",
+      "default": "./src/components/CmsCollectionSelect/index.tsx"
+    },
+    "./components/CmsCollectionFieldSelect": {
+      "import": "./src/components/CmsCollectionFieldSelect/index.tsx",
+      "require": "./src/components/CmsCollectionFieldSelect/index.tsx",
+      "default": "./src/components/CmsCollectionFieldSelect/index.tsx"
     }
   },
   "files": [
@@ -32,8 +52,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx --format cjs,esm --dts --clean --out-dir dist",
-    "dev": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx --format cjs,esm --dts --watch --out-dir dist",
+    "build": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx src/components/CompanySelect/index.tsx src/components/LeadSourceSelect/index.tsx src/components/CmsCollectionSelect/index.tsx src/components/CmsCollectionFieldSelect/index.tsx --format cjs,esm --dts --clean --out-dir dist",
+    "dev": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx src/components/CompanySelect/index.tsx src/components/LeadSourceSelect/index.tsx src/components/CmsCollectionSelect/index.tsx src/components/CmsCollectionFieldSelect/index.tsx --format cjs,esm --dts --watch --out-dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "prepublishOnly": "pnpm build"
@@ -58,6 +78,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "next": "16.2.6",
     "payload": "^3.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0"

@@ -1,10 +1,21 @@
-import type { CollectionConfig, CollectionAfterChangeHook, CollectionSlug } from 'payload'
+import type { CollectionConfig, CollectionAfterChangeHook, CollectionSlug, FieldAccess } from 'payload'
 import {
     siteScopedCreate, siteScopedDelete, siteScopedRead, siteScopedUpdate
 } from '../access/roles';
 import { organizationField } from '../fields/organizationField';
 import { encryptCredential, decryptCredential } from '../utils/erpnextCrypto';
-import type { ERPNextCompany, ERPNextLeadSource } from '../types';
+import type { ERPNextCompany, ERPNextLeadSource, UserWithRole } from '../types';
+
+/**
+ * Field-level guard: only admins/super-admins (or trusted server calls using
+ * overrideAccess) may set the ERPNext instance URL and credentials. Editors can
+ * still see the (masked) config, but must not be able to repoint `erpnextUrl` at
+ * an attacker server — doing so would exfiltrate the decrypted apiKey/apiSecret via
+ * the outbound Authorization header (defeating masking). Rotating credentials is
+ * likewise an admin action.
+ */
+const adminOrAboveField: FieldAccess = ({ req }) =>
+    ['super-admin', 'admin'].includes((req?.user as unknown as UserWithRole | undefined)?.role ?? '')
 
 // ── Credential encryption hooks (reused by apiKey, apiSecret, webhookSecret) ──
 
@@ -260,6 +271,10 @@ export const ERPNextConfig: CollectionConfig = {
                             name: 'erpnextUrl',
                             type: 'text',
                             required: true,
+                            access: {
+                                create: adminOrAboveField,
+                                update: adminOrAboveField,
+                            },
                             admin: {
                                 description: 'ERPNext instance URL (e.g. https://erp.ivarse.com)',
                             },
@@ -271,6 +286,10 @@ export const ERPNextConfig: CollectionConfig = {
                                     name: 'apiKey',
                                     type: 'text',
                                     required: true,
+                                    access: {
+                                        create: adminOrAboveField,
+                                        update: adminOrAboveField,
+                                    },
                                     admin: {
                                         description: 'ERPNext API Key (from User → API Access)',
                                         width: '50%',
@@ -290,6 +309,10 @@ export const ERPNextConfig: CollectionConfig = {
                                     name: 'apiSecret',
                                     type: 'text',
                                     required: true,
+                                    access: {
+                                        create: adminOrAboveField,
+                                        update: adminOrAboveField,
+                                    },
                                     admin: {
                                         description: 'ERPNext API Secret',
                                         width: '50%',
@@ -338,7 +361,7 @@ export const ERPNextConfig: CollectionConfig = {
                                 description: 'Auto-injected into submissions for company-aware doctypes.',
                                 components: {
                                     Field: {
-                                        path: './components/CompanySelect/index',
+                                        path: 'payload-erpnext-plugin/components/CompanySelect',
                                         exportName: 'CompanySelectField',
                                     },
                                 },
@@ -352,7 +375,7 @@ export const ERPNextConfig: CollectionConfig = {
                                 description: 'Auto-injected into Lead submissions as the "source" field.',
                                 components: {
                                     Field: {
-                                        path: './components/LeadSourceSelect/index',
+                                        path: 'payload-erpnext-plugin/components/LeadSourceSelect',
                                         exportName: 'LeadSourceSelectField',
                                     },
                                 },
@@ -420,13 +443,13 @@ export const ERPNextConfig: CollectionConfig = {
                 // ── Tab 4: Inbound Webhooks ──────────────────────────
                 {
                     label: '🔔 Webhooks',
-                    description: 'Configure inbound webhooks from ERPNext to Payload.',
+                    description: 'Configure inbound webhooks from ERPNext to Payload. What actually gets synced is defined in the ERPNext Sync Rules collection — one rule per DocType.',
                     fields: [
                         {
                             name: 'webhookSecret',
                             type: 'text',
                             admin: {
-                                description: 'HMAC-SHA256 secret for verifying inbound ERPNext webhooks. Set in ERPNext → Webhook → Secret.',
+                                description: 'HMAC-SHA256 secret for verifying inbound ERPNext webhooks. Set in ERPNext → Webhook → Secret. Point ERPNext webhooks at POST /api/erpnext-sync?site=<your-site-slug>.',
                             },
                             hooks: {
                                 beforeChange: [
@@ -438,16 +461,6 @@ export const ERPNextConfig: CollectionConfig = {
                                         decryptAfterRead({ value, req, context: context as Record<string, unknown> }),
                                 ],
                             },
-                        },
-                        {
-                            name: 'syncCollections',
-                            type: 'select',
-                            hasMany: true,
-                            defaultValue: ['insights'],
-                            options: [
-                                { label: 'Insights (Blog Posts)', value: 'insights' },
-                            ],
-                            admin: { description: 'Which Payload collections should accept data from ERPNext webhooks (Jobs are fetched directly via proxy)' },
                         },
                     ],
                 },

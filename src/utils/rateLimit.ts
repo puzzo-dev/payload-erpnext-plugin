@@ -111,18 +111,27 @@ export async function checkRateLimit(
 /**
  * Extract client IP from a Payload request.
  *
- * Priority:
- *   1. x-forwarded-for (first entry, from reverse proxy)
- *   2. x-real-ip (nginx convention)
- *   3. Underlying socket remote address (direct connection)
- *   4. Random per-request key (prevents shared bucket exhaustion)
+ * Priority (proxy headers only trusted when TRUSTED_PROXY_COUNT > 0):
+ *   1. x-real-ip / x-forwarded-for — ONLY behind a trusted proxy
+ *   2. Underlying socket remote address (direct connection)
+ *   3. Random per-request key (prevents shared bucket exhaustion)
  */
 export function getClientIp(req: { headers: Headers; connection?: { remoteAddress?: string } }): string {
-    const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    if (forwarded) return forwarded
+    // x-forwarded-for / x-real-ip are client-settable; trust them only when an
+    // explicit trusted-proxy count says a proxy in front overwrites them. Otherwise
+    // an attacker rotates the header to bypass rate limiting.
+    const proxyCount = parseInt(process.env.TRUSTED_PROXY_COUNT ?? '0', 10)
+    if (proxyCount > 0) {
+        const realIp = req.headers.get('x-real-ip')
+        if (realIp) return realIp
 
-    const realIp = req.headers.get('x-real-ip')
-    if (realIp) return realIp
+        const parts = req.headers.get('x-forwarded-for')?.split(',').map(s => s.trim()).filter(Boolean)
+        if (parts && parts.length > 0) {
+            const idx = parts.length - proxyCount
+            const ip = parts[Math.max(0, idx)]
+            if (ip) return ip
+        }
+    }
 
     // Node.js IncomingMessage exposes the underlying socket
     const socketIp = (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress

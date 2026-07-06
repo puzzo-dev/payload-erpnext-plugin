@@ -166,6 +166,77 @@ async function parseERPNextError(response: Response): Promise<string> {
 const ERPNEXT_RATE_LIMIT_MAX = 30
 const ERPNEXT_RATE_LIMIT_WINDOW_MS = 60_000
 
+// The Origin/Referer used by validateProxyAccess is client-settable, so a non-browser
+// caller can spoof a trusted origin and reach the "public" tier to spam ERPNext
+// (Lead/Contact/Ticket/Email Group Member) using the business's own credentials.
+// Two defences below, applied only to public-tier WRITES (submit/upload):
+//   1. A much stricter per-IP rate limit than the read tier (always on).
+//   2. Optional reCAPTCHA enforcement (ERPNEXT_PROXY_REQUIRE_CAPTCHA=true) — verified
+//      against the site's own secret. Kept opt-in so existing public forms that do
+//      not yet send a token are not broken until the frontend is updated.
+const PUBLIC_WRITE_RATE_LIMIT_MAX = 5
+const PUBLIC_WRITE_RATE_LIMIT_WINDOW_MS = 60_000
+
+/** Verify a reCAPTCHA token against the given site's configured secret. */
+async function verifyProxyCaptcha(req: PayloadRequest, siteSlug: string | null | undefined, token: string | null | undefined): Promise<boolean> {
+    if (!siteSlug) return false
+    try {
+        const sites = await req.payload.find({
+            collection: 'sites',
+            where: { slug: { equals: siteSlug } },
+            limit: 1,
+            depth: 0,
+            overrideAccess: true,
+        })
+        const site = sites.docs[0] as unknown as { recaptcha?: { enabled?: boolean; secretKey?: string } } | undefined
+        const recaptcha = site?.recaptcha
+        // If the site has no reCAPTCHA configured, there is nothing to verify against
+        // — treat as not-verifiable (caller decides whether that blocks the request).
+        if (!recaptcha?.enabled || !recaptcha.secretKey) return false
+        if (!token) return false
+        const resp = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ secret: recaptcha.secretKey, response: token }).toString(),
+            signal: AbortSignal.timeout(8000),
+        })
+        const data = await resp.json() as { success?: boolean; score?: number }
+        return data.success === true && (data.score === undefined || data.score >= 0.5)
+    } catch (err) {
+        req.payload.logger.warn(`[ERPNext-Proxy] captcha verification error: ${err}`)
+        return false
+    }
+}
+
+/**
+ * Extra guards for public-tier writes: a strict rate limit and (optionally) a
+ * verified reCAPTCHA token. Returns an error Response to short-circuit, or null.
+ */
+async function enforcePublicWriteGuards(
+    req: PayloadRequest,
+    accessLevel: 'internal' | 'admin' | 'public',
+    siteSlug: string | null | undefined,
+    token: string | null | undefined,
+): Promise<Response | null> {
+    if (accessLevel !== 'public') return null
+
+    const ip = getClientIp(req)
+    const strict = await checkRateLimit(`erpnext-proxy-write:${ip}`, PUBLIC_WRITE_RATE_LIMIT_MAX, PUBLIC_WRITE_RATE_LIMIT_WINDOW_MS)
+    if (!strict.allowed) {
+        return Response.json(
+            { error: 'Too many submissions, please try again later' },
+            { status: 429, headers: { 'Retry-After': String(Math.ceil(strict.retryAfterMs! / 1000)) } },
+        )
+    }
+
+    if (process.env.ERPNEXT_PROXY_REQUIRE_CAPTCHA === 'true') {
+        if (!(await verifyProxyCaptcha(req, siteSlug, token))) {
+            return Response.json({ error: 'Captcha verification required' }, { status: 403 })
+        }
+    }
+    return null
+}
+
 /**
  * Validate that the request originates from an internal service or trusted
  * frontend. Checks X-Internal-Key header (for server-to-server) or
@@ -279,7 +350,7 @@ export const erpnextProxySubmit: Endpoint = {
     method: 'post',
     handler: async (req) => {
         try {
-            const { error: accessDenied } = await validateProxyAccess(req)
+            const { error: accessDenied, accessLevel } = await validateProxyAccess(req)
             if (accessDenied) return accessDenied
 
             const rateLimited = await applyProxyRateLimit(req)
@@ -293,7 +364,11 @@ export const erpnextProxySubmit: Endpoint = {
             if (!body || typeof body !== 'object') {
                 return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
             }
-            const { doctype, data, site } = body as { doctype?: unknown; data?: unknown; site?: unknown }
+            const { doctype, data, site, captchaToken } = body as { doctype?: unknown; data?: unknown; site?: unknown; captchaToken?: unknown }
+
+            // Spoofable-origin abuse guard: strict rate limit + optional captcha for public writes.
+            const writeGuard = await enforcePublicWriteGuards(req, accessLevel, typeof site === 'string' ? site : undefined, typeof captchaToken === 'string' ? captchaToken : undefined)
+            if (writeGuard) return writeGuard
 
             if (typeof doctype !== 'string' || doctype.length === 0 || doctype.length > 120) {
                 return Response.json({ error: 'Missing or invalid required field: doctype (string, 1-120 chars)' }, { status: 400 })
@@ -457,6 +532,16 @@ export const erpnextProxyHealth: Endpoint = {
     method: 'get',
     handler: async (req) => {
         try {
+            // Require a trusted origin / internal key + rate limit, same as the other
+            // proxy endpoints. Without this, an unauthenticated caller can force the
+            // server to make an outbound request carrying the ERPNext credentials to
+            // whatever URL the config points at (SSRF + credential-probe surface).
+            const { error: accessDenied } = await validateProxyAccess(req)
+            if (accessDenied) return accessDenied
+
+            const rateLimited = await applyProxyRateLimit(req)
+            if (rateLimited) return rateLimited
+
             const url = new URL(req.url || '', 'http://localhost')
             const site = url.searchParams.get('site')
 
@@ -486,7 +571,7 @@ export const erpnextProxyUpload: Endpoint = {
     method: 'post',
     handler: async (req) => {
         try {
-            const { error: accessDenied } = await validateProxyAccess(req)
+            const { error: accessDenied, accessLevel } = await validateProxyAccess(req)
             if (accessDenied) return accessDenied
 
             const rateLimited = await applyProxyRateLimit(req)
@@ -500,6 +585,11 @@ export const erpnextProxyUpload: Endpoint = {
             const docname = formData.get('docname') as string;
             const site = formData.get('site') as string;
             const file = formData.get('file') as File;
+            const captchaToken = formData.get('captchaToken') as string | null;
+
+            // Spoofable-origin abuse guard: strict rate limit + optional captcha for public writes.
+            const writeGuard = await enforcePublicWriteGuards(req, accessLevel, site, captchaToken);
+            if (writeGuard) return writeGuard;
 
             if (!doctype || !docname || !file) {
                 return Response.json({ error: 'Missing required fields' }, { status: 400 });

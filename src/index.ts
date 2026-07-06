@@ -1,6 +1,7 @@
 import type { Plugin } from 'payload'
 import { ERPNextConfig } from './collections/ERPNextConfig'
 import { ERPNextDeadLetter } from './collections/ERPNextDeadLetter'
+import { ERPNextSyncRules } from './collections/ERPNextSyncRules'
 import { anonymousUploadEndpoint } from './endpoints/anonymousUpload'
 import {
     erpnextProxySubmit,
@@ -12,8 +13,15 @@ import { fetchCompaniesEndpoint } from './endpoints/fetchCompanies'
 import { fetchDocTypesEndpoint } from './endpoints/fetchDocTypes'
 import { fetchDocTypeFieldsEndpoint } from './endpoints/fetchDocTypeFields'
 import { fetchLeadSourcesEndpoint } from './endpoints/fetchLeadSources'
+import { fetchCmsCollectionsEndpoint } from './endpoints/fetchCmsCollections'
+import { fetchCmsCollectionFieldsEndpoint } from './endpoints/fetchCmsCollectionFields'
 import { retryDeadLettersEndpoint } from './endpoints/retryDeadLetters'
+import { syncFromERPNextEndpoint } from './endpoints/syncFromERPNext'
+import { opscloudWebhookEndpoint } from './endpoints/opscloudWebhook'
 import { erpGetHandler, erpPostHandler, erpPatchHandler, erpDeleteHandler } from './actions/erpActions'
+import { createConnectionMonitorHook } from './hooks/connectionMonitor'
+import { createLinkErpnextCustomerEndpoint } from './endpoints/linkErpnextCustomer'
+import type { ERPNextHostBindings } from './types'
 
 /** Minimal interface for the CMS action registry. The plugin registers into it without importing the full CMS type. */
 export interface ActionRegistryRef {
@@ -30,13 +38,14 @@ export interface ERPNextPluginOptions {
      */
     registry?: ActionRegistryRef
     /**
-     * External afterChange hooks to be appended to the erpnext-config collection.
-     * Use this from the CMS to add connection monitoring without creating a circular
-     * dependency (e.g. pass `erpnextConnectionMonitorHook` from the CMS).
+     * Host automation primitives (dependency injection). The plugin owns all ERP
+     * code but the automation engine lives in the CMS, so the host passes in the
+     * functions the plugin needs — keeping the plugin free of any back-import into
+     * payload-cms and the workflow engine fully functional with ERP absent.
+     *  - `emitSystemEvent` + `systemEvents` → enables ERPNext connection monitoring
+     *  - `isInternalAuth` → enables the customer→ERPNext link endpoint
      */
-    erpnextConfigHooks?: {
-        afterChange?: ((args: any) => any)[]
-    }
+    host?: ERPNextHostBindings
 }
 
 /**
@@ -81,22 +90,43 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
             fetchDocTypesEndpoint,
             fetchDocTypeFieldsEndpoint,
             fetchLeadSourcesEndpoint,
+            // CMS introspection for sync-rule dropdowns (target collection + its fields).
+            fetchCmsCollectionsEndpoint,
+            fetchCmsCollectionFieldsEndpoint,
             retryDeadLettersEndpoint,
+            // Inbound ERPNext/Frappe webhooks — the plugin owns all ERP ingress.
+            syncFromERPNextEndpoint,
+            opscloudWebhookEndpoint,
         ]
 
         if (enableAnonymousUpload) {
             endpoints.push(anonymousUploadEndpoint)
         }
 
-        // Inject external afterChange hooks into ERPNextConfig (e.g. connection monitor)
-        const erpnextConfigCollection = options.erpnextConfigHooks?.afterChange?.length
+        // customer→ERPNext link endpoint — needs the host internal-auth guard.
+        if (options.host?.isInternalAuth) {
+            endpoints.push(createLinkErpnextCustomerEndpoint(options.host.isInternalAuth))
+        }
+
+        // ERPNext connection monitoring — built from injected host primitives and
+        // appended to the erpnext-config collection's afterChange. Enabled only when
+        // the host provides emitSystemEvent + the ERPNEXT_CONNECTION_* event names.
+        const emit = options.host?.emitSystemEvent
+        const evts = options.host?.systemEvents
+        const connectionMonitorHook = (emit && evts?.ERPNEXT_CONNECTION_FAILED && evts?.ERPNEXT_CONNECTION_RESTORED)
+            ? createConnectionMonitorHook(emit, {
+                ERPNEXT_CONNECTION_FAILED: evts.ERPNEXT_CONNECTION_FAILED,
+                ERPNEXT_CONNECTION_RESTORED: evts.ERPNEXT_CONNECTION_RESTORED,
+            })
+            : null
+        const erpnextConfigCollection = connectionMonitorHook
             ? {
                 ...ERPNextConfig,
                 hooks: {
                     ...ERPNextConfig.hooks,
                     afterChange: [
                         ...(ERPNextConfig.hooks?.afterChange ?? []),
-                        ...options.erpnextConfigHooks.afterChange,
+                        connectionMonitorHook,
                     ],
                 },
             }
@@ -183,36 +213,21 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
 
         return {
             ...config,
-            collections: [...modifiedCollections, erpnextConfigCollection, ERPNextDeadLetter],
+            collections: [...modifiedCollections, erpnextConfigCollection, ERPNextSyncRules, ERPNextDeadLetter],
             endpoints,
         }
     }
 }
 
 export { getCredentials, authHeaders } from './endpoints/erpnextProxy'
+export { verifyERPNextWebhookSignature } from './utils/webhookSignature'
+// Programmatic inbound-sync API (for scripts / manual "sync now" tooling).
+export {
+    backfillSyncRule,
+    upsertErpRecord,
+    deleteErpRecord,
+    findRulesForDoctype,
+    mapErpRecord,
+    type ERPNextSyncRule,
+} from './sync/runSyncRule'
 export type { ERPNextCredentials } from './types'
-
-/**
- * Verify an ERPNext HMAC-SHA256 webhook signature in constant time.
- *
- * ERPNext/Frappe sends:
- *   - `X-ERPNext-Signature`: hex digest  (standard ERPNext webhook)
- *   - `X-Frappe-Webhook-Signature`: base64 digest  (OpsCloud / custom Frappe apps)
- *
- * @param rawBody   - raw request body string (before JSON.parse)
- * @param signature - value of the signature header (hex or base64)
- * @param secret    - shared HMAC secret
- * @param encoding  - 'hex' (default) or 'base64'
- */
-export function verifyERPNextWebhookSignature(
-    rawBody: string,
-    signature: string,
-    secret: string,
-    encoding: 'hex' | 'base64' = 'hex',
-): boolean {
-    // Import is deferred to avoid forcing a crypto import at module init time.
-    const { createHmac, timingSafeEqual } = require('node:crypto') as typeof import('node:crypto')
-    const expected = createHmac('sha256', secret).update(rawBody).digest(encoding)
-    if (expected.length !== signature.length) return false
-    return timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
-}

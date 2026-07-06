@@ -16,16 +16,18 @@ export const ERPNextTargetFieldSelect: React.FC<{ path: string }> = ({ path }) =
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    // path is e.g. steps.0.field_mapping.0.target_field
-    // we need site (from root) and doctype (from steps.0.doctype)
+    // Resolve the doctype this field belongs to. Two layouts are supported:
+    //  - Workflows: path is `steps.N.field_mapping.M.target_field` → doctype at `steps.N.doctype`
+    //  - ERPNext Sync Rules: path is `field_mappings.M.erp_field` (or `upsert_erp_field`) → doctype at root `doctype`
     const parts = path.split('.')
-    const blockIndex = parts.findIndex(p => p === 'steps') + 1
-    const blockNum = parts[blockIndex]
-    
     const data = getData() as any
     const siteObj = data?.site
     const siteId = typeof siteObj === 'object' && siteObj !== null ? siteObj.id : siteObj
-    const doctype = data?.steps?.[blockNum]?.doctype
+
+    const stepsIndex = parts.findIndex(p => p === 'steps')
+    const doctype = stepsIndex !== -1
+      ? data?.steps?.[parts[stepsIndex + 1]]?.doctype
+      : data?.doctype
 
     if (!siteId) {
       setOptions([])

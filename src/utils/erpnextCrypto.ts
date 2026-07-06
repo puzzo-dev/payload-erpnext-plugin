@@ -25,8 +25,17 @@ function getEncryptionKey(): Buffer | null {
 
     const hex = process.env.ERPNEXT_ENCRYPTION_KEY
     if (!hex) {
+        // Fail-fast in production: storing ERPNext API credentials in plain text means
+        // any DB dump/backup leaks every tenant's ERPNext keys. Require an explicit
+        // opt-out for the rare legitimate case (e.g. throwaway dev-like environments).
+        if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PLAINTEXT_ERPNEXT_CREDS !== 'true') {
+            throw new Error(
+                '[erpnext-crypto] FATAL: ERPNEXT_ENCRYPTION_KEY is required in production ' +
+                '(generate with `openssl rand -hex 32`). Set ALLOW_PLAINTEXT_ERPNEXT_CREDS=true to knowingly store credentials in plain text.',
+            )
+        }
         if (process.env.NODE_ENV === 'production') {
-            console.warn('[erpnext-crypto] ERPNEXT_ENCRYPTION_KEY not set — ERPNext credentials will be stored in plain text.')
+            console.warn('[erpnext-crypto] ERPNEXT_ENCRYPTION_KEY not set — ERPNext credentials will be stored in plain text (ALLOW_PLAINTEXT_ERPNEXT_CREDS=true).')
         }
         initialized = true
         return null
