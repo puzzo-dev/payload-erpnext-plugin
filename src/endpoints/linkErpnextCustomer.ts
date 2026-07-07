@@ -1,15 +1,19 @@
 import type { Endpoint, PayloadRequest } from 'payload'
 
 /**
- * POST /api/customers/:id/link-erpnext
+ * POST /api/erpnext/link-customer/:id
  *
  * Internal-only endpoint that links a Payload customer to its ERPNext Customer id.
  * Built as a factory so the plugin receives the host's `isInternalAuth` guard via DI
  * rather than importing CMS access utilities. Registered only when the host provides it.
+ *
+ * The path is namespaced under `/erpnext/` — NOT under `/customers/` — deliberately: a
+ * config-level endpoint whose path begins with a collection slug (`/customers/...`) is
+ * shadowed by that collection's default REST handler and returns "Route not found".
  */
 export function createLinkErpnextCustomerEndpoint(isInternalAuth: (req: any) => boolean): Endpoint {
     return {
-        path: '/api/customers/:id/link-erpnext',
+        path: '/erpnext/link-customer/:id',
         method: 'post',
         handler: async (req: PayloadRequest) => {
             try {
