@@ -69,21 +69,6 @@ async function promoteCustomerToGroup(
   return true;
 }
 
-// Defaults for sites without per-site mappings in erpnext-config.
-// Each site can override these in CMS admin → erpnext-config → Webhooks tab.
-const DEFAULT_STATUS_TEMPLATES: Record<string, { template?: string; delayMs?: number }> = {
-  Confirmed: { template: 'tog_order_confirmed' },
-  Dispatched: { template: 'tog_out_for_delivery' },
-  Delivered: { template: 'tog_review_request', delayMs: 30 * 60 * 1000 },
-};
-
-const DEFAULT_ERP_TO_PAYLOAD_STATUS: Record<string, string> = {
-  Confirmed: 'confirmed',
-  Dispatched: 'dispatched',
-  Delivered: 'delivered',
-  Cancelled: 'cancelled',
-};
-
 /**
  * Verify the Frappe/ERPNext webhook HMAC-SHA256 signature.
  * Frappe encodes the signature as base64 (not hex).
@@ -154,8 +139,9 @@ export const erpnextWebhookEndpoint: Endpoint = {
         );
       }
 
-      // Build per-site status mappings. If the site has configured any mappings,
-      // those win outright; otherwise fall back to the built-in defaults.
+      // The webhook only acts on status mappings explicitly configured in the
+      // site's erpnext-config. There are no built-in defaults — that would
+      // reintroduce the order-specific hardcoding this endpoint is meant to avoid.
       const rawMappings = activeConfig?.erpnextStatusMappings as Array<{
         erpStatus: string
         payloadStatus: string
@@ -175,20 +161,15 @@ export const erpnextWebhookEndpoint: Endpoint = {
           }
           if (m.payloadStatus) erpToPayloadStatus[m.erpStatus] = m.payloadStatus;
         }
-      } else {
-        for (const [status, tmpl] of Object.entries(DEFAULT_STATUS_TEMPLATES)) {
-          statusTemplates[status] = tmpl;
-        }
-        for (const [status, payloadStatus] of Object.entries(DEFAULT_ERP_TO_PAYLOAD_STATUS)) {
-          erpToPayloadStatus[status] = payloadStatus;
-        }
       }
 
       const webhookConfig = {
-        doctype: String(activeConfig?.webhookDocType ?? 'Sales Order'),
-        targetCollection: String(activeConfig?.webhookTargetCollection ?? 'orders'),
-        targetKeyField: String(activeConfig?.webhookTargetKeyField ?? 'erpnext_so_name'),
-        statusField: String(activeConfig?.webhookStatusField ?? 'status'),
+        // Required defaults: re-apply if a user clears the field.
+        doctype: String(activeConfig?.webhookDocType ?? '').trim() || 'Sales Order',
+        targetCollection: String(activeConfig?.webhookTargetCollection ?? '').trim() || 'orders',
+        targetKeyField: String(activeConfig?.webhookTargetKeyField ?? '').trim() || 'erpnext_so_name',
+        statusField: String(activeConfig?.webhookStatusField ?? '').trim() || 'status',
+        // Optional: blank disables the feature.
         notifyField: String(activeConfig?.webhookNotifyField ?? 'review_notify_after'),
         customerGroupField: String(activeConfig?.webhookCustomerGroupField ?? 'custom_phone'),
         completedCustomerGroup: String(activeConfig?.webhookCompletedCustomerGroup ?? 'TOG Completed'),

@@ -171,7 +171,7 @@ The `erpnext-sync-rules` collection lets you map ERPNext DocType changes into Pa
 | **Deduplication** | Define a reference key + path so the same ERPNext record can be updated instead of duplicated. |
 | **Backfill** | Triggered automatically on save to fetch all existing ERPNext records for the configured DocType. |
 
-Use the **`/api/erpnext-sync`** endpoint as the webhook target in ERPNext/Frappe. The endpoint verifies the webhook signature using the configured `webhookSecret` on the `erpnext-config` document.
+Use the **`/api/webhooks/erpnext?site=<site-slug>`** endpoint as the webhook target in ERPNext/Frappe. The endpoint verifies the webhook signature using the configured `webhookSecret` on the `erpnext-config` document.
 
 ---
 
@@ -216,14 +216,16 @@ All admin endpoints require `super-admin` or `admin` authentication.
 | `GET`  | `/api/cms-collection-fields` | Lists fields for a Payload CMS collection (admin). |
 | `POST` | `/api/erpnext/retry-dead-letters` | Retries dead-letter queue items. |
 | `POST` | `/api/anonymous-upload` | Anonymous file upload to Payload Media. |
-| `POST` | `/api/erpnext-sync` | Inbound ERPNext webhook receiver; verifies Frappe signature. |
+| `POST` | `/api/webhooks/erpnext?site=<site-slug>` | Inbound ERPNext webhook receiver; verifies Frappe signature and updates any configured Payload collection. |
 | `POST` | `/api/erpnext/link-customer/:id` | Internal-only link between Payload customer and ERPNext Customer. |
 
 ---
 
 ## Project-Specific Endpoints
 
-The plugin source also includes project-specific endpoints such as `/api/webhooks/erpnext` and the `erpnext` webhook receiver. These are maintained for internal integrations and are **not considered part of the stable public API** of this package. If you are consuming the plugin from npm you can ignore these unless your project explicitly enables them.
+The plugin source also includes a project-specific `/api/webhooks/erpnext?site=<site-slug>` webhook receiver. It is maintained for internal integrations and is **not considered part of the stable public API** of this package. If you are consuming the plugin from npm you can ignore it unless your project explicitly enables it.
+
+When enabled, the webhook is fully generic: per-site `erpnext-config` fields define the source ERPNext DocType, target Payload collection, key/status/notify fields, and an optional customer group promotion. The defaults preserve the original Sales Order → `orders` workflow, but any DocType/collection pair can be configured.
 
 ---
 

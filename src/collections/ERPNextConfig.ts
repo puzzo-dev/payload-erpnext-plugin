@@ -544,14 +544,8 @@ export const ERPNextConfig: CollectionConfig = {
                             type: 'array',
                             label: 'ERPNext Status Mappings',
                             admin: {
-                                description: 'Maps inbound ERPNext statuses to Payload statuses, notification templates, and optional delays. Used by POST /api/webhooks/erpnext?site=<site-slug>.',
+                                description: 'Maps inbound ERPNext statuses to Payload statuses, notification templates, and optional delays. Required for POST /api/webhooks/erpnext?site=<site-slug>; no built-in defaults are provided.',
                             },
-                            defaultValue: [
-                                { erpStatus: 'Confirmed', payloadStatus: 'confirmed', template: 'tog_order_confirmed' },
-                                { erpStatus: 'Dispatched', payloadStatus: 'dispatched', template: 'tog_out_for_delivery' },
-                                { erpStatus: 'Delivered', payloadStatus: 'delivered', template: 'tog_review_request', delayMinutes: 30 },
-                                { erpStatus: 'Cancelled', payloadStatus: 'cancelled' },
-                            ],
                             fields: [
                                 {
                                     type: 'row',
