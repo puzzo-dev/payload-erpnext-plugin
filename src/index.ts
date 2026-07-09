@@ -12,7 +12,6 @@ import {
 import { fetchCompaniesEndpoint } from './endpoints/fetchCompanies'
 import { fetchDocTypesEndpoint } from './endpoints/fetchDocTypes'
 import { fetchDocTypeFieldsEndpoint } from './endpoints/fetchDocTypeFields'
-import { fetchLeadSourcesEndpoint } from './endpoints/fetchLeadSources'
 import { fetchCmsCollectionsEndpoint } from './endpoints/fetchCmsCollections'
 import { fetchCmsCollectionFieldsEndpoint } from './endpoints/fetchCmsCollectionFields'
 import { retryDeadLettersEndpoint } from './endpoints/retryDeadLetters'
@@ -89,7 +88,6 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
             fetchCompaniesEndpoint,
             fetchDocTypesEndpoint,
             fetchDocTypeFieldsEndpoint,
-            fetchLeadSourcesEndpoint,
             // CMS introspection for sync-rule dropdowns (target collection + its fields).
             fetchCmsCollectionsEndpoint,
             fetchCmsCollectionFieldsEndpoint,

@@ -225,7 +225,7 @@ All admin endpoints require `super-admin` or `admin` authentication.
 
 The plugin source also includes a project-specific `/api/webhooks/erpnext?site=<site-slug>` webhook receiver. It is maintained for internal integrations and is **not considered part of the stable public API** of this package. If you are consuming the plugin from npm you can ignore it unless your project explicitly enables it.
 
-When enabled, the webhook is fully generic: per-site `erpnext-config` fields define the source ERPNext DocType, target Payload collection, key/status/notify fields, and an optional customer group promotion. The defaults preserve the original Sales Order → `orders` workflow, but any DocType/collection pair can be configured.
+When enabled, the webhook is fully generic: per-site `erpnext-config` fields define the source ERPNext DocType, target Payload collection, key/status/notify fields, and an optional customer group promotion. Status mappings must be configured per site; the plugin provides no built-in order-specific defaults.
 
 ---
 
