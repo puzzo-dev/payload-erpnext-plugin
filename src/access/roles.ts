@@ -27,11 +27,22 @@ export const siteScopedRead = (siteField = 'site'): Access => {
     }
 }
 
-export const siteScopedCreate: Access = ({ req }) => {
-    if (isInternalAuth(req)) return true
-    if (!req.user) return false
-    const role = (req.user as unknown as UserWithRole).role
-    return ['super-admin', 'admin', 'editor'].includes(role)
+export const siteScopedCreate = (siteField = 'site'): Access => {
+    return ({ req, data }) => {
+        if (isInternalAuth(req)) return true
+        if (!req.user) return false
+        const u = req.user as unknown as UserWithRole
+        if (u.role === 'super-admin') return true
+        if (!['admin', 'editor'].includes(u.role)) return false
+        const siteId = getUserSiteId(u)
+        if (!siteId) return false
+        const rawDocSite =
+            data && typeof (data as Record<string, unknown>)[siteField] === 'object'
+                ? ((data as Record<string, unknown>)[siteField] as { id?: string | number })?.id
+                : (data as Record<string, unknown>)[siteField]
+        if (rawDocSite === undefined || rawDocSite === null || rawDocSite === '') return false
+        return String(rawDocSite) === String(siteId)
+    }
 }
 
 export const siteScopedUpdate = (siteField = 'site'): Access => {

@@ -5,7 +5,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
  *
  * ERPNext/Frappe sends:
  *   - `X-ERPNext-Signature`: hex digest  (standard ERPNext webhook)
- *   - `X-Frappe-Webhook-Signature`: base64 digest  (OpsCloud / custom Frappe apps)
+ *   - `X-Frappe-Webhook-Signature`: base64 digest  (ERPNext / custom Frappe apps)
  *
  * @param rawBody   - raw request body string (before JSON.parse)
  * @param signature - value of the signature header (hex or base64)

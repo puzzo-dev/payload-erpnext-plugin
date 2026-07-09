@@ -1,7 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { decryptCredential } from '../utils/erpnextCrypto';
-import type { ERPNextCompany } from '../types';
+import { getUserSiteId, type UserWithRole, type ERPNextCompany } from '../types';
 
 /**
  * POST /api/erpnext-config/fetch-companies
@@ -33,8 +33,11 @@ export const fetchCompaniesEndpoint: Endpoint = {
     handler: async (req) => {
         try {
             // ── Auth: require logged-in admin ────────────────────────────
-            const user = req.user as unknown as { role?: string } | null
-            if (!user || !['super-admin', 'admin'].includes(user.role || '')) {
+            const user = req.user as unknown as UserWithRole | null
+            const userRole = user?.role ?? ''
+            const isSuperAdmin = userRole === 'super-admin'
+            const isAdmin = isSuperAdmin || userRole === 'admin'
+            if (!user || !isAdmin) {
                 return Response.json(
                     { error: 'Authentication required — admin or super-admin only' },
                     { status: 401 },
@@ -86,6 +89,20 @@ export const fetchCompaniesEndpoint: Endpoint = {
                 })
 
                 const cfg = config as unknown as Record<string, unknown>
+
+                // Enforce tenant scoping for non-super-admins.
+                if (!isSuperAdmin) {
+                    const userSiteId = getUserSiteId(user)
+                    const cfgSite = cfg.site as string | number | { id?: string | number } | null | undefined
+                    const cfgSiteId = cfgSite && typeof cfgSite === 'object' ? cfgSite.id : cfgSite
+                    if (!userSiteId || String(cfgSiteId) !== String(userSiteId)) {
+                        return Response.json(
+                            { error: 'You can only fetch companies for your assigned site' },
+                            { status: 403 },
+                        )
+                    }
+                }
+
                 erpnextUrl = (cfg.erpnextUrl as string) || ''
                 apiKey = (cfg.apiKey as string) || ''
                 apiSecret = (cfg.apiSecret as string) || ''
@@ -94,6 +111,14 @@ export const fetchCompaniesEndpoint: Endpoint = {
                 apiKey = decryptCredential(apiKey)
                 apiSecret = decryptCredential(apiSecret)
             } else if (rawUrl && rawKey && rawSecret) {
+                // Raw credentials are a testing convenience; restrict to super-admins
+                // so a site admin cannot probe arbitrary ERPNext instances.
+                if (!isSuperAdmin) {
+                    return Response.json(
+                        { error: 'Raw ERPNext credentials can only be used by super-admins' },
+                        { status: 403 },
+                    )
+                }
                 erpnextUrl = rawUrl
                 apiKey = rawKey
                 apiSecret = rawSecret

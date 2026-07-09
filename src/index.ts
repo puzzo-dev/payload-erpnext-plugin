@@ -17,7 +17,7 @@ import { fetchCmsCollectionsEndpoint } from './endpoints/fetchCmsCollections'
 import { fetchCmsCollectionFieldsEndpoint } from './endpoints/fetchCmsCollectionFields'
 import { retryDeadLettersEndpoint } from './endpoints/retryDeadLetters'
 import { syncFromERPNextEndpoint } from './endpoints/syncFromERPNext'
-import { opscloudWebhookEndpoint } from './endpoints/opscloudWebhook'
+import { erpnextWebhookEndpoint } from './endpoints/erpnextWebhook'
 import { erpGetHandler, erpPostHandler, erpPatchHandler, erpDeleteHandler } from './actions/erpActions'
 import { createConnectionMonitorHook } from './hooks/connectionMonitor'
 import { createLinkErpnextCustomerEndpoint } from './endpoints/linkErpnextCustomer'
@@ -96,7 +96,7 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
             retryDeadLettersEndpoint,
             // Inbound ERPNext/Frappe webhooks — the plugin owns all ERP ingress.
             syncFromERPNextEndpoint,
-            opscloudWebhookEndpoint,
+            erpnextWebhookEndpoint,
         ]
 
         if (enableAnonymousUpload) {

@@ -1,6 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit'
 import { decryptCredential } from '../utils/erpnextCrypto'
+import { getUserSiteId, type UserWithRole } from '../types'
 
 const FETCH_FIELDS_RATE_LIMIT_MAX = 30
 const FETCH_FIELDS_RATE_LIMIT_WINDOW_MS = 60_000
@@ -10,13 +11,14 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
     method: 'get',
     handler: async (req) => {
         try {
-            const user = req.user as unknown as { role?: string } | null
+            const user = req.user as UserWithRole | null
             if (!user || !['super-admin', 'admin'].includes(user.role || '')) {
                 return Response.json(
                     { error: 'Authentication required' },
                     { status: 401 },
                 )
             }
+            const userSiteId = getUserSiteId(user)
 
             const ip = getClientIp(req)
             const rateCheck = await checkRateLimit(
@@ -36,6 +38,10 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
 
             if (!siteId || !doctype) {
                 return Response.json({ error: 'Provide siteId and doctype' }, { status: 400 })
+            }
+
+            if (user.role !== 'super-admin' && userSiteId && String(siteId) !== String(userSiteId)) {
+                return Response.json({ error: 'Not authorized to access this site' }, { status: 403 })
             }
 
             const sites = await req.payload.find({
@@ -67,12 +73,16 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
             if (!cfg) return Response.json({ error: 'No active ERPNext config' }, { status: 400 })
 
             const erpnextUrl = (cfg.erpnextUrl || '').replace(/\/+$/, '')
+            if (!erpnextUrl.startsWith('https://')) {
+                return Response.json({ error: 'Only HTTPS ERPNext URLs are allowed' }, { status: 400 })
+            }
             const apiKey = decryptCredential(cfg.apiKey || '')
             const apiSecret = decryptCredential(cfg.apiSecret || '')
             if (!apiKey || !apiSecret) return Response.json({ error: 'Missing credentials' }, { status: 400 })
 
             // Query DocField table where parent = doctype
-            const fieldsUrl = `${erpnextUrl}/api/resource/DocField?filters=[["parent","=","${doctype}"]]&fields=["fieldname","label","fieldtype"]&limit_page_length=500`
+            const encodedDoctype = encodeURIComponent(doctype)
+            const fieldsUrl = `${erpnextUrl}/api/resource/DocField?filters=[["parent","=","${encodedDoctype}"]]&fields=["fieldname","label","fieldtype"]&limit_page_length=500`
 
             const response = await fetch(fieldsUrl, {
                 method: 'GET',

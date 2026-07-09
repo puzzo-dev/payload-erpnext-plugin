@@ -1,4 +1,5 @@
 import type { Endpoint, PayloadRequest, CollectionSlug } from 'payload'
+import { timingSafeEqual } from 'node:crypto'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import type { ERPNextCredentials } from '../types';
 import { decryptCredential } from '../utils/erpnextCrypto';
@@ -88,6 +89,10 @@ export async function getCredentials(
         try {
             const parsed = new URL(url)
             if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
+            if (parsed.protocol === 'http:' && process.env.NODE_ENV === 'production') {
+                payload.logger.error('[ERPNext-Proxy] Refusing to use non-HTTPS ERPNext URL in production')
+                return null
+            }
         } catch {
             return null
         }
@@ -250,11 +255,19 @@ async function enforcePublicWriteGuards(
  *   4. Everything else → denied
  */
 async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Response, accessLevel: 'internal' | 'admin' | 'public' }> {
-    // 1. Server-to-server: check internal API key
+    // 1. Server-to-server: check internal API key (constant-time)
     const internalKey = process.env.ERPNEXT_PROXY_KEY
     if (internalKey) {
-        const provided = req.headers.get('x-internal-key')
-        if (provided === internalKey) return { accessLevel: 'internal' } // Allowed
+        const provided = req.headers.get('x-internal-key') || ''
+        if (provided.length === internalKey.length) {
+            const a = Buffer.from(provided)
+            const b = Buffer.from(internalKey)
+            try {
+                if (timingSafeEqual(a, b)) return { accessLevel: 'internal' } // Allowed
+            } catch {
+                /* lengths differ or other error — fall through to deny */
+            }
+        }
     }
 
     const origin = req.headers.get('origin') || req.headers.get('referer') || ''

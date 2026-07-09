@@ -1,6 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { decryptCredential } from '../utils/erpnextCrypto';
+import { getUserSiteId, type UserWithRole } from '../types';
 
 /**
  * GET /api/erpnext-doctypes?siteId={siteId}&siteSlug={siteSlug}
@@ -23,13 +24,14 @@ export const fetchDocTypesEndpoint: Endpoint = {
     method: 'get',
     handler: async (req) => {
         try {
-            const user = req.user as unknown as { role?: string } | null
+            const user = req.user as UserWithRole | null
             if (!user || !['super-admin', 'admin'].includes(user.role || '')) {
                 return Response.json(
                     { error: 'Authentication required — admin or super-admin only' },
                     { status: 401 },
                 )
             }
+            const userSiteId = getUserSiteId(user)
 
             const ip = getClientIp(req)
             const rateCheck = await checkRateLimit(
@@ -49,6 +51,18 @@ export const fetchDocTypesEndpoint: Endpoint = {
 
             if (!siteId && !siteSlug) {
                 return Response.json({ error: 'Provide siteId or siteSlug' }, { status: 400 })
+            }
+
+            if (user.role !== 'super-admin' && userSiteId) {
+                if (siteSlug) {
+                    return Response.json(
+                        { error: 'Scoped admins must use siteId, not siteSlug' },
+                        { status: 403 },
+                    )
+                }
+                if (siteId && String(siteId) !== String(userSiteId)) {
+                    return Response.json({ error: 'Not authorized to access this site' }, { status: 403 })
+                }
             }
 
             const sites = await req.payload.find({

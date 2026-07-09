@@ -9,6 +9,58 @@ const ALLOWED_MIME_TYPES = [
 ]
 
 /**
+ * Validate the request origin against the CMS public URL and any explicitly
+ * trusted origins. Anonymous uploads are intended for browser forms; requiring
+ * an origin blocks abuse from arbitrary third-party sites.
+ */
+function isTrustedOrigin(req: any): boolean {
+    const origin = req.headers.get('origin') || req.headers.get('referer') || ''
+
+    // No origin is unusual for a real browser form POST. Allow it only when
+    // no trusted-origin list is configured (single-tenant / development mode).
+    if (!origin) {
+        return !process.env.TRUSTED_ORIGINS && !process.env.CORS_ORIGINS
+    }
+
+    let parsedOrigin: URL | undefined
+    try {
+        parsedOrigin = new URL(origin)
+    } catch {
+        return false
+    }
+
+    const cmsHost =
+        process.env.PAYLOAD_PUBLIC_SERVER_URL ||
+        process.env.NEXT_PUBLIC_PAYLOAD_URL ||
+        ''
+
+    if (cmsHost) {
+        try {
+            const cmsUrl = new URL(cmsHost)
+            if (parsedOrigin.hostname === cmsUrl.hostname && parsedOrigin.protocol === cmsUrl.protocol) {
+                return true
+            }
+        } catch {
+            // ignore malformed CMS URL
+        }
+    }
+
+    const trusted = [
+        ...(process.env.TRUSTED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean) ?? []),
+        ...(process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean) ?? []),
+    ]
+
+    return trusted.some((candidate) => {
+        try {
+            const t = new URL(candidate)
+            return parsedOrigin!.hostname === t.hostname && parsedOrigin!.protocol === t.protocol
+        } catch {
+            return false
+        }
+    })
+}
+
+/**
  * Verify the file's actual leading bytes match its declared MIME type. The client
  * `file.type` header is attacker-controlled, so a caller could declare
  * "application/pdf" while uploading active content (e.g. an SVG/HTML file named
@@ -51,6 +103,11 @@ export const anonymousUploadEndpoint: Endpoint = {
     const rateLimit = await checkRateLimit(`anonymous-upload:${ip}`, 5, 60 * 1000)
     if (!rateLimit.allowed) {
         return Response.json({ error: 'Rate limit exceeded. Please try again later.' }, { status: 429 })
+    }
+
+    if (!isTrustedOrigin(req)) {
+        logger.warn(`[AnonymousUpload] Rejected upload from untrusted origin`)
+        return Response.json({ error: 'Untrusted origin' }, { status: 403 })
     }
 
     try {

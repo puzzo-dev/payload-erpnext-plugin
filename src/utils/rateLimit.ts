@@ -37,9 +37,17 @@ function ensureRedisInProduction(): void {
 
 class InMemoryRateLimiter {
     private store = new Map<string, RateLimitEntry>()
+    private cleanupInterval: ReturnType<typeof setInterval> | null = null
 
     constructor() {
-        setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS)
+        this.cleanupInterval = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS)
+    }
+
+    stopCleanup(): void {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval)
+            this.cleanupInterval = null
+        }
     }
 
     check(
@@ -61,6 +69,14 @@ class InMemoryRateLimiter {
 
         entry.count++
         return { allowed: true }
+    }
+
+    reset(key: string): void {
+        this.store.delete(key)
+    }
+
+    resetAll(): void {
+        this.store.clear()
     }
 
     private cleanup(): void {
@@ -106,6 +122,12 @@ export async function checkRateLimit(
         }
     }
     return limiter.check(key, maxRequests, windowMs)
+}
+
+/** Test-only helper to clear the in-memory rate limit store and stop its cleanup interval. */
+export function __resetRateLimitStore(): void {
+    limiter.resetAll()
+    limiter.stopCleanup()
 }
 
 /**

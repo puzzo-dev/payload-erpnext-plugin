@@ -51,8 +51,15 @@ function getEncryptionKey(): Buffer | null {
     return cachedKey
 }
 
-// Invoke immediately on module load to fail-fast if misconfigured
+// Invoke immediately on module load to fail-fast if misconfigured.
+// Tests can call __resetEncryptionKey() to force re-initialization.
 getEncryptionKey()
+
+/** Test-only helper to reset the cached encryption key state. */
+export function __resetEncryptionKey(): void {
+    cachedKey = null
+    initialized = false
+}
 
 /**
  * Encrypt a plain-text credential. Returns a string prefixed with "enc:".

@@ -26,12 +26,13 @@ export const superAdminOnly: Access = ({ req: { user } }) => {
 export const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET
 
 export function isInternalAuth(req: { headers?: { get: (name: string) => string | null } } | PayloadRequest): boolean {
-    if (!INTERNAL_API_SECRET) return false
+    const secret = process.env.INTERNAL_API_SECRET
+    if (!secret) return false
     const authSecret = req.headers?.get('x-internal-auth')
     if (!authSecret) return false
     // Constant-time comparison to prevent timing oracle attacks.
     const a = Buffer.from(authSecret)
-    const b = Buffer.from(INTERNAL_API_SECRET)
+    const b = Buffer.from(secret)
     if (a.byteLength !== b.byteLength) return false
     return timingSafeEqual(a, b)
 }

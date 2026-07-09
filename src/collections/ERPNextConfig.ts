@@ -198,7 +198,7 @@ export const ERPNextConfig: CollectionConfig = {
     },
     access: {
         read: siteScopedRead(),
-        create: siteScopedCreate,
+        create: siteScopedCreate(),
         update: siteScopedUpdate(),
         delete: siteScopedDelete(),
     },
@@ -461,6 +461,58 @@ export const ERPNextConfig: CollectionConfig = {
                                         decryptAfterRead({ value, req, context: context as Record<string, unknown> }),
                                 ],
                             },
+                        },
+                        {
+                            name: 'erpnextCompletedCustomerGroup',
+                            type: 'text',
+                            defaultValue: 'TOG Completed',
+                            admin: {
+                                description: 'ERPNext Customer Group to promote paid customers into when an order is Confirmed. Override per site (e.g. SBA Completed).',
+                            },
+                        },
+                        {
+                            name: 'erpnextStatusMappings',
+                            type: 'array',
+                            label: 'ERPNext Order Status Mappings',
+                            admin: {
+                                description: 'Maps inbound ERPNext order statuses to Payload order statuses, notification templates, and optional review delays. Used by POST /api/webhooks/erpnext?site=<site-slug>.',
+                            },
+                            defaultValue: [
+                                { erpStatus: 'Confirmed', payloadStatus: 'confirmed', template: 'tog_order_confirmed' },
+                                { erpStatus: 'Dispatched', payloadStatus: 'dispatched', template: 'tog_out_for_delivery' },
+                                { erpStatus: 'Delivered', payloadStatus: 'delivered', template: 'tog_review_request', delayMinutes: 30 },
+                                { erpStatus: 'Cancelled', payloadStatus: 'cancelled' },
+                            ],
+                            fields: [
+                                {
+                                    type: 'row',
+                                    fields: [
+                                        {
+                                            name: 'erpStatus',
+                                            type: 'text',
+                                            required: true,
+                                            admin: { width: '25%', description: 'ERPNext status, e.g. Confirmed' },
+                                        },
+                                        {
+                                            name: 'payloadStatus',
+                                            type: 'text',
+                                            required: true,
+                                            admin: { width: '25%', description: 'Payload Orders status, e.g. confirmed' },
+                                        },
+                                        {
+                                            name: 'template',
+                                            type: 'text',
+                                            admin: { width: '35%', description: 'Notification template slug. Leave blank for no notification.' },
+                                        },
+                                        {
+                                            name: 'delayMinutes',
+                                            type: 'number',
+                                            min: 0,
+                                            admin: { width: '15%', description: 'Review delay in minutes.' },
+                                        },
+                                    ],
+                                },
+                            ],
                         },
                     ],
                 },

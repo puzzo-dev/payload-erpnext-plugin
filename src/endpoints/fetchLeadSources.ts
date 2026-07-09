@@ -1,7 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { decryptCredential } from '../utils/erpnextCrypto';
-import type { ERPNextLeadSource } from '../types';
+import { getUserSiteId, type UserWithRole, type ERPNextLeadSource } from '../types';
 
 /**
  * POST /api/erpnext-config/fetch-lead-sources
@@ -32,13 +32,14 @@ export const fetchLeadSourcesEndpoint: Endpoint = {
     handler: async (req) => {
         try {
             // ── Auth: require logged-in admin ────────────────────────────
-            const user = req.user as unknown as { role?: string } | null
+            const user = req.user as UserWithRole | null
             if (!user || !['super-admin', 'admin'].includes(user.role || '')) {
                 return Response.json(
                     { error: 'Authentication required — admin or super-admin only' },
                     { status: 401 },
                 )
             }
+            const userSiteId = getUserSiteId(user)
 
             // ── Rate limit ─────────────────────────────────────────────
             const ip = getClientIp(req)
@@ -84,6 +85,21 @@ export const fetchLeadSourcesEndpoint: Endpoint = {
                 })
 
                 const cfg = config as unknown as Record<string, unknown>
+
+                // Non-super-admins must only read configs belonging to their own site.
+                if (user.role !== 'super-admin' && userSiteId) {
+                    const configSiteId =
+                        typeof cfg.site === 'object' && cfg.site !== null
+                            ? (cfg.site as { id?: string | number }).id
+                            : cfg.site
+                    if (String(configSiteId) !== String(userSiteId)) {
+                        return Response.json(
+                            { error: 'Not authorized to access this ERPNext configuration' },
+                            { status: 403 },
+                        )
+                    }
+                }
+
                 erpnextUrl = (cfg.erpnextUrl as string) || ''
                 apiKey = (cfg.apiKey as string) || ''
                 apiSecret = (cfg.apiSecret as string) || ''
@@ -91,6 +107,14 @@ export const fetchLeadSourcesEndpoint: Endpoint = {
                 apiKey = decryptCredential(apiKey)
                 apiSecret = decryptCredential(apiSecret)
             } else if (rawUrl && rawKey && rawSecret) {
+                // Raw credentials are only allowed for super-admins testing a connection
+                // before saving. Regular admins must use a saved configId.
+                if (user.role !== 'super-admin') {
+                    return Response.json(
+                        { error: 'Raw ERPNext credentials can only be used by super-admins' },
+                        { status: 403 },
+                    )
+                }
                 erpnextUrl = rawUrl
                 apiKey = rawKey
                 apiSecret = rawSecret

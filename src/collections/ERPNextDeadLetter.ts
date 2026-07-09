@@ -1,5 +1,5 @@
 import type { CollectionConfig } from 'payload'
-import { superAdminOnly } from '../access/roles';
+import { siteScopedRead, superAdminOnly } from '../access/roles';
 
 /**
  * ERPNext Dead Letter Queue
@@ -16,7 +16,7 @@ export const ERPNextDeadLetter: CollectionConfig = {
         description: 'Failed ERPNext forwards awaiting retry or manual resolution',
     },
     access: {
-        read: superAdminOnly,
+        read: siteScopedRead(),
         create: superAdminOnly,
         update: superAdminOnly,
         delete: superAdminOnly,

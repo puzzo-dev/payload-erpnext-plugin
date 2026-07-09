@@ -72,7 +72,7 @@ export const ERPNextSyncRules: CollectionConfig = {
     },
     access: {
         read: siteScopedRead(),
-        create: siteScopedCreate,
+        create: siteScopedCreate(),
         update: siteScopedUpdate(),
         delete: siteScopedDelete(),
     },
