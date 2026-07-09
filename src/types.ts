@@ -23,8 +23,6 @@ export const superAdminOnly: Access = ({ req: { user } }) => {
     return (user as unknown as UserWithRole).role === 'super-admin'
 }
 
-export const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET
-
 export function isInternalAuth(req: { headers?: { get: (name: string) => string | null } } | PayloadRequest): boolean {
     const secret = process.env.INTERNAL_API_SECRET
     if (!secret) return false

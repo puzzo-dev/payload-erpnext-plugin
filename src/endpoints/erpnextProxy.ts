@@ -242,6 +242,18 @@ async function enforcePublicWriteGuards(
     return null
 }
 
+/** Normalize an origin to `protocol://hostname:port`, omitting default ports. Returns null for invalid input. */
+function normalizeOrigin(origin: string): string | null {
+    try {
+        const u = new URL(origin)
+        const defaultPort = u.protocol === 'http:' ? '80' : u.protocol === 'https:' ? '443' : undefined
+        const port = u.port && u.port !== defaultPort ? `:${u.port}` : ''
+        return `${u.protocol}//${u.hostname}${port}`
+    } catch {
+        return null
+    }
+}
+
 /**
  * Validate that the request originates from an internal service or trusted
  * frontend. Checks X-Internal-Key header (for server-to-server) or
@@ -278,21 +290,29 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
 
     // 3. Browser with origin: validate against CMS host + trusted origins
     if (origin) {
-        const trustedHosts = new Set<string>(['localhost', '127.0.0.1'])
+        const trustedOrigins = new Set<string>()
 
-        // CMS's own hostname
+        // In development, local origins are acceptable for testing.
+        if (process.env.NODE_ENV !== 'production') {
+            trustedOrigins.add('http://localhost')
+            trustedOrigins.add('https://localhost')
+            trustedOrigins.add('http://127.0.0.1')
+            trustedOrigins.add('https://127.0.0.1')
+        }
+
+        // CMS's own origin (protocol + host + port)
         const cmsHost = process.env.PAYLOAD_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_PAYLOAD_URL || ''
         if (cmsHost) {
-            try { trustedHosts.add(new URL(cmsHost).hostname) } catch { /* invalid URL */ }
+            const normalized = normalizeOrigin(cmsHost)
+            if (normalized) trustedOrigins.add(normalized)
         }
 
         // Additional trusted origins from env (comma-separated full URLs)
         const extra = process.env.TRUSTED_ORIGINS || process.env.CORS_ORIGINS || ''
         if (extra) {
             for (const o of extra.split(',')) {
-                const trimmed = o.trim()
-                if (!trimmed) continue
-                try { trustedHosts.add(new URL(trimmed).hostname) } catch { /* skip invalid */ }
+                const normalized = normalizeOrigin(o.trim())
+                if (normalized) trustedOrigins.add(normalized)
             }
         }
 
@@ -306,18 +326,15 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
             })
             for (const site of sites.docs) {
                 const s = site as unknown as Record<string, any>;
-                if (s.internalDomain) {
-                    trustedHosts.add(s.internalDomain)
+                const addDomain = (raw: string) => {
+                    const candidate = raw.startsWith('http') ? raw : `https://${raw}`
+                    const normalized = normalizeOrigin(candidate)
+                    if (normalized) trustedOrigins.add(normalized)
                 }
+                if (s.internalDomain) addDomain(s.internalDomain)
                 if (Array.isArray(s.allowedDomains)) {
                     for (const d of s.allowedDomains) {
-                        if (d.domain) {
-                            try {
-                                trustedHosts.add(new URL(d.domain.startsWith('http') ? d.domain : `https://${d.domain}`).hostname)
-                            } catch {
-                                trustedHosts.add(d.domain)
-                            }
-                        }
+                        if (d.domain) addDomain(d.domain)
                     }
                 }
             }
@@ -325,11 +342,9 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
             req.payload.logger.error(`[ERPNext-Proxy] Failed to fetch allowed domains: ${err}`)
         }
 
-        // Extract hostname from origin/referer
-        try {
-            const originHostname = new URL(origin).hostname
-            if (trustedHosts.has(originHostname)) return { accessLevel: 'public' } // Allowed public access
-        } catch { /* malformed origin */ }
+        // Compare full origin (protocol + hostname + port)
+        const normalizedOrigin = normalizeOrigin(origin)
+        if (normalizedOrigin && trustedOrigins.has(normalizedOrigin)) return { accessLevel: 'public' } // Allowed public access
     }
 
     return {

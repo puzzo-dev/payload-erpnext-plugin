@@ -1,6 +1,18 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 
+/** Normalize an origin to `protocol://hostname:port`, omitting default ports. */
+function normalizeOrigin(origin: string): string | null {
+    try {
+        const u = new URL(origin)
+        const defaultPort = u.protocol === 'http:' ? '80' : u.protocol === 'https:' ? '443' : undefined
+        const port = u.port && u.port !== defaultPort ? `:${u.port}` : ''
+        return `${u.protocol}//${u.hostname}${port}`
+    } catch {
+        return null
+    }
+}
+
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB
 const ALLOWED_MIME_TYPES = [
     'application/pdf',
@@ -16,18 +28,16 @@ const ALLOWED_MIME_TYPES = [
 function isTrustedOrigin(req: any): boolean {
     const origin = req.headers.get('origin') || req.headers.get('referer') || ''
 
-    // No origin is unusual for a real browser form POST. Allow it only when
-    // no trusted-origin list is configured (single-tenant / development mode).
+    // No origin is unusual for a real browser form POST. In production, require
+    // an explicit origin. In development, allow it only when no trusted-origin
+    // list is configured (single-tenant / development mode).
     if (!origin) {
+        if (process.env.NODE_ENV === 'production') return false
         return !process.env.TRUSTED_ORIGINS && !process.env.CORS_ORIGINS
     }
 
-    let parsedOrigin: URL | undefined
-    try {
-        parsedOrigin = new URL(origin)
-    } catch {
-        return false
-    }
+    const normalizedOrigin = normalizeOrigin(origin)
+    if (!normalizedOrigin) return false
 
     const cmsHost =
         process.env.PAYLOAD_PUBLIC_SERVER_URL ||
@@ -35,13 +45,9 @@ function isTrustedOrigin(req: any): boolean {
         ''
 
     if (cmsHost) {
-        try {
-            const cmsUrl = new URL(cmsHost)
-            if (parsedOrigin.hostname === cmsUrl.hostname && parsedOrigin.protocol === cmsUrl.protocol) {
-                return true
-            }
-        } catch {
-            // ignore malformed CMS URL
+        const normalizedCms = normalizeOrigin(cmsHost)
+        if (normalizedCms && normalizedOrigin === normalizedCms) {
+            return true
         }
     }
 
@@ -51,12 +57,8 @@ function isTrustedOrigin(req: any): boolean {
     ]
 
     return trusted.some((candidate) => {
-        try {
-            const t = new URL(candidate)
-            return parsedOrigin!.hostname === t.hostname && parsedOrigin!.protocol === t.protocol
-        } catch {
-            return false
-        }
+        const normalizedCandidate = normalizeOrigin(candidate)
+        return normalizedCandidate !== null && normalizedOrigin === normalizedCandidate
     })
 }
 

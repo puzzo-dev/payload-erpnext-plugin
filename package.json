@@ -17,34 +17,64 @@
       }
     },
     "./components/ERPNextDocTypeSelect": {
-      "import": "./src/components/ERPNextDocTypeSelect/index.tsx",
-      "require": "./src/components/ERPNextDocTypeSelect/index.tsx",
-      "default": "./src/components/ERPNextDocTypeSelect/index.tsx"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/ERPNextDocTypeSelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/ERPNextDocTypeSelect/index.js"
+      }
     },
     "./components/ERPNextTargetFieldSelect": {
-      "import": "./src/components/ERPNextTargetFieldSelect/index.tsx",
-      "require": "./src/components/ERPNextTargetFieldSelect/index.tsx",
-      "default": "./src/components/ERPNextTargetFieldSelect/index.tsx"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/ERPNextTargetFieldSelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/ERPNextTargetFieldSelect/index.js"
+      }
     },
     "./components/CompanySelect": {
-      "import": "./src/components/CompanySelect/index.tsx",
-      "require": "./src/components/CompanySelect/index.tsx",
-      "default": "./src/components/CompanySelect/index.tsx"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CompanySelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CompanySelect/index.js"
+      }
     },
     "./components/LeadSourceSelect": {
-      "import": "./src/components/LeadSourceSelect/index.tsx",
-      "require": "./src/components/LeadSourceSelect/index.tsx",
-      "default": "./src/components/LeadSourceSelect/index.tsx"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/LeadSourceSelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/LeadSourceSelect/index.js"
+      }
     },
     "./components/CmsCollectionSelect": {
-      "import": "./src/components/CmsCollectionSelect/index.tsx",
-      "require": "./src/components/CmsCollectionSelect/index.tsx",
-      "default": "./src/components/CmsCollectionSelect/index.tsx"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CmsCollectionSelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CmsCollectionSelect/index.js"
+      }
     },
     "./components/CmsCollectionFieldSelect": {
-      "import": "./src/components/CmsCollectionFieldSelect/index.tsx",
-      "require": "./src/components/CmsCollectionFieldSelect/index.tsx",
-      "default": "./src/components/CmsCollectionFieldSelect/index.tsx"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CmsCollectionFieldSelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CmsCollectionFieldSelect/index.js"
+      }
     }
   },
   "files": [

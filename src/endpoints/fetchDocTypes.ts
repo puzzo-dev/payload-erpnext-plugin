@@ -98,7 +98,7 @@ export const fetchDocTypesEndpoint: Endpoint = {
             }
 
             const erpnextUrl = (cfg.erpnextUrl || '').replace(/\/+$/, '')
-            if (!erpnextUrl.startsWith('https://')) {
+            if (process.env.NODE_ENV === 'production' && !erpnextUrl.startsWith('https://')) {
                 return Response.json({ error: 'Only HTTPS ERPNext URLs are allowed' }, { status: 400 })
             }
 

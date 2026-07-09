@@ -73,7 +73,7 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
             if (!cfg) return Response.json({ error: 'No active ERPNext config' }, { status: 400 })
 
             const erpnextUrl = (cfg.erpnextUrl || '').replace(/\/+$/, '')
-            if (!erpnextUrl.startsWith('https://')) {
+            if (process.env.NODE_ENV === 'production' && !erpnextUrl.startsWith('https://')) {
                 return Response.json({ error: 'Only HTTPS ERPNext URLs are allowed' }, { status: 400 })
             }
             const apiKey = decryptCredential(cfg.apiKey || '')

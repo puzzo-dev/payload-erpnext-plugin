@@ -127,7 +127,7 @@ export const fetchLeadSourcesEndpoint: Endpoint = {
 
             // ── TLS enforcement ────────────────────────────────────────
             const normalizedUrl = erpnextUrl.replace(/\/+$/, '')
-            if (!normalizedUrl.startsWith('https://')) {
+            if (process.env.NODE_ENV === 'production' && !normalizedUrl.startsWith('https://')) {
                 return Response.json(
                     { error: 'Only HTTPS ERPNext URLs are allowed' },
                     { status: 400 },

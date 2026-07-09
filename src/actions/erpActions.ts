@@ -7,6 +7,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function isTransientError(err: unknown, status?: number): boolean {
+  // Client errors (4xx) are not transient — they will fail the same way on retry.
+  if (status != null && status >= 400 && status < 500) return false
+  // Server errors (5xx), network errors, timeouts, and other unknown failures may be transient.
+  return true
+}
+
 async function erpCall(creds: any, path: string, method = 'GET', body?: object): Promise<any> {
   let lastError: Error | undefined
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -27,13 +34,18 @@ async function erpCall(creds: any, path: string, method = 'GET', body?: object):
           if (data?.exception) msg = String(data.exception)
           else if (data?.message) msg = String(data.message)
         } catch { /* keep original */ }
-        throw new Error(msg)
+        const error = new Error(msg)
+        ;(error as any).status = res.status
+        throw error
       }
       return res.json()
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
-      if (attempt < MAX_RETRIES) {
+      const status = (lastError as any).status as number | undefined
+      if (attempt < MAX_RETRIES && isTransientError(err, status)) {
         await sleep(BASE_DELAY_MS * Math.pow(2, attempt))
+      } else {
+        break
       }
     }
   }

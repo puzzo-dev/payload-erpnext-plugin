@@ -6,17 +6,68 @@ import { getCredentials, authHeaders } from './erpnextProxy';
 /**
  * POST /api/webhooks/erpnext?site=<site-slug>
  *
- * Per-site ERPNext → Payload webhook for order status changes.
+ * Per-site ERPNext → Payload webhook for status-aware document updates.
+ *
+ * Fully generic: each site configures the source ERPNext DocType, the target
+ * Payload collection, the fields to match and update, and optional customer
+ * group promotion. Defaults keep the original Sales Order → Orders behavior.
  *
  * Security: the webhook secret is resolved per site from the active
  * erpnext-config document (`webhookSecret`). A missing secret fails closed
  * with 403. There is no global fallback secret.
- *
- * On status change:
- *   - Updates the Payload Orders collection status field
- *   - On 'Confirmed': promotes the customer to the configured "Completed" customer group in ERPNext
- *   - On 'Delivered': sets review_notify_after (future timestamp for WhatsApp review prompt)
  */
+
+/**
+ * Thin ERPNext API caller with typed credentials.
+ * Uses `authHeaders()` from the plugin to construct the token header.
+ */
+async function call(creds: ERPNextCredentials, path: string, method = 'GET', body?: object) {
+  if (!/^https?:\/\//i.test(creds.url)) throw new Error('ERPNext URL is not configured')
+  const res = await fetch(`${creds.url}${path}`, {
+    method,
+    headers: authHeaders(creds),
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`ERPNext API Error: ${res.status}`);
+  return res.json();
+}
+
+async function getSourceRecord(
+  creds: ERPNextCredentials,
+  doctype: string,
+  name: string,
+  fields: string[],
+): Promise<Record<string, unknown> | undefined> {
+  const encodedName = encodeURIComponent(name);
+  const encodedDoctype = encodeURIComponent(doctype);
+  const encodedFields = encodeURIComponent(JSON.stringify(fields));
+  const result = await call(
+    creds,
+    `/api/resource/${encodedDoctype}/${encodedName}?fields=${encodedFields}`,
+  );
+  return result.data as Record<string, unknown> | undefined;
+}
+
+async function promoteCustomerToGroup(
+  creds: ERPNextCredentials,
+  lookupValue: string,
+  lookupField: string,
+  customerGroup: string,
+): Promise<boolean> {
+  const qs = new URLSearchParams({
+    filters: JSON.stringify([[lookupField, '=', lookupValue]]),
+    fields: JSON.stringify(['name', 'customer_group']),
+  });
+  const res = await call(creds, `/api/resource/Customer?${qs.toString()}`);
+  if (!res.data?.length) return false;
+  const customer = res.data[0];
+  if (customer.customer_group === customerGroup) return true;
+  await call(creds, `/api/resource/Customer/${encodeURIComponent(customer.name)}`, 'PUT', {
+    customer_group: customerGroup,
+  });
+  return true;
+}
 
 // Defaults for sites without per-site mappings in erpnext-config.
 // Each site can override these in CMS admin → erpnext-config → Webhooks tab.
@@ -32,45 +83,6 @@ const DEFAULT_ERP_TO_PAYLOAD_STATUS: Record<string, string> = {
   Delivered: 'delivered',
   Cancelled: 'cancelled',
 };
-
-/**
- * Thin ERPNext API caller with typed credentials.
- * Uses `authHeaders()` from the plugin to construct the token header.
- */
-async function call(creds: ERPNextCredentials, path: string, method = 'GET', body?: object) {
-  if (!/^https?:\/\//i.test(creds.url)) throw new Error('ERPNext URL is not configured')
-  const res = await fetch(`${creds.url}${path}`, {
-    method,
-    headers: authHeaders(creds),
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error(`ERPNext API Error: ${res.status}`);
-  return res.json();
-}
-
-async function getOrderCustomer(creds: ERPNextCredentials, soName: string) {
-  const encodedName = encodeURIComponent(soName);
-  const so = await call(
-    creds,
-    `/api/resource/Sales Order/${encodedName}?fields=["customer","customer_name","custom_phone"]`
-  );
-  return so.data;
-}
-
-async function promoteCustomerToPaid(creds: ERPNextCredentials, phone: string, customerGroup: string) {
-  const qs = new URLSearchParams({
-    filters: JSON.stringify([['custom_phone', '=', phone]]),
-    fields: JSON.stringify(['name', 'customer_group']),
-  });
-  const res = await call(creds, `/api/resource/Customer?${qs.toString()}`);
-  if (!res.data?.length) return false;
-  const customer = res.data[0];
-  if (customer.customer_group === customerGroup) return true;
-  await call(creds, `/api/resource/Customer/${encodeURIComponent(customer.name)}`, 'PUT', {
-    customer_group: customerGroup,
-  });
-  return true;
-}
 
 /**
  * Verify the Frappe/ERPNext webhook HMAC-SHA256 signature.
@@ -142,7 +154,8 @@ export const erpnextWebhookEndpoint: Endpoint = {
         );
       }
 
-      // Build per-site status mappings, falling back to defaults.
+      // Build per-site status mappings. If the site has configured any mappings,
+      // those win outright; otherwise fall back to the built-in defaults.
       const rawMappings = activeConfig?.erpnextStatusMappings as Array<{
         erpStatus: string
         payloadStatus: string
@@ -162,17 +175,24 @@ export const erpnextWebhookEndpoint: Endpoint = {
           }
           if (m.payloadStatus) erpToPayloadStatus[m.erpStatus] = m.payloadStatus;
         }
-      }
-      // Merge defaults for any statuses the site did not explicitly configure.
-      for (const [status, tmpl] of Object.entries(DEFAULT_STATUS_TEMPLATES)) {
-        if (!statusTemplates[status]) statusTemplates[status] = tmpl;
-      }
-      for (const [status, payloadStatus] of Object.entries(DEFAULT_ERP_TO_PAYLOAD_STATUS)) {
-        if (!erpToPayloadStatus[status]) erpToPayloadStatus[status] = payloadStatus;
+      } else {
+        for (const [status, tmpl] of Object.entries(DEFAULT_STATUS_TEMPLATES)) {
+          statusTemplates[status] = tmpl;
+        }
+        for (const [status, payloadStatus] of Object.entries(DEFAULT_ERP_TO_PAYLOAD_STATUS)) {
+          erpToPayloadStatus[status] = payloadStatus;
+        }
       }
 
-      const completedCustomerGroup = (activeConfig?.erpnextCompletedCustomerGroup as string | undefined)
-        || 'TOG Completed';
+      const webhookConfig = {
+        doctype: String(activeConfig?.webhookDocType ?? 'Sales Order'),
+        targetCollection: String(activeConfig?.webhookTargetCollection ?? 'orders'),
+        targetKeyField: String(activeConfig?.webhookTargetKeyField ?? 'erpnext_so_name'),
+        statusField: String(activeConfig?.webhookStatusField ?? 'status'),
+        notifyField: String(activeConfig?.webhookNotifyField ?? 'review_notify_after'),
+        customerGroupField: String(activeConfig?.webhookCustomerGroupField ?? 'custom_phone'),
+        completedCustomerGroup: String(activeConfig?.webhookCompletedCustomerGroup ?? 'TOG Completed'),
+      };
 
       // ── 3. Verify HMAC before parsing body ───────────────────────────────
       const sig = req.headers.get('x-frappe-webhook-signature') ?? '';
@@ -204,29 +224,41 @@ export const erpnextWebhookEndpoint: Endpoint = {
         return Response.json({ status: 'no-action' });
       }
 
-      const customer = await getOrderCustomer(creds, doc.name);
-      if (!customer?.custom_phone) return Response.json({ status: 'no-phone' });
+      // Optional: fetch the source record to get the configured customer lookup value.
+      let customerLookupValue: string | undefined;
+      if (webhookConfig.customerGroupField) {
+        try {
+          const sourceRecord = await getSourceRecord(
+            creds,
+            webhookConfig.doctype,
+            doc.name,
+            [webhookConfig.customerGroupField],
+          );
+          const value = sourceRecord?.[webhookConfig.customerGroupField];
+          if (typeof value === 'string') customerLookupValue = value;
+        } catch (fetchErr) {
+          req.payload.logger.warn(`[erpnext-webhook] Could not fetch source record: ${fetchErr}`);
+        }
+      }
 
-      const phone = customer.custom_phone;
-
-      // Sync status back to Payload Orders collection
+      // Sync status back to the configured Payload collection.
       if (payloadStatus) {
         try {
           const match = await req.payload.find({
-            collection: 'orders' as never,
-            where: { erpnext_so_name: { equals: doc.name } },
+            collection: webhookConfig.targetCollection as never,
+            where: { [webhookConfig.targetKeyField]: { equals: doc.name } },
             limit: 1,
             depth: 0,
           });
           if (match.docs[0]) {
-            const updateData: Record<string, unknown> = { status: payloadStatus };
+            const updateData: Record<string, unknown> = { [webhookConfig.statusField]: payloadStatus };
 
-            if (statusConfig?.delayMs) {
-              updateData.review_notify_after = new Date(Date.now() + statusConfig.delayMs).toISOString();
+            if (statusConfig?.delayMs && webhookConfig.notifyField) {
+              updateData[webhookConfig.notifyField] = new Date(Date.now() + statusConfig.delayMs).toISOString();
             }
 
             await req.payload.update({
-              collection: 'orders' as never,
+              collection: webhookConfig.targetCollection as never,
               id: (match.docs[0] as Record<string, unknown>).id as string,
               data: updateData as never,
             });
@@ -236,10 +268,15 @@ export const erpnextWebhookEndpoint: Endpoint = {
         }
       }
 
-      // Promote customer to the configured "Completed" group when payment is confirmed
-      if (doc.status === 'Confirmed') {
+      // Optional customer group promotion.
+      if (customerLookupValue && webhookConfig.completedCustomerGroup) {
         try {
-          await promoteCustomerToPaid(creds, phone, completedCustomerGroup);
+          await promoteCustomerToGroup(
+            creds,
+            customerLookupValue,
+            webhookConfig.customerGroupField,
+            webhookConfig.completedCustomerGroup,
+          );
         } catch (promoErr) {
           req.payload.logger.error(`[erpnext-webhook] customer promotion failed for site "${siteSlug}": ${promoErr}`);
         }

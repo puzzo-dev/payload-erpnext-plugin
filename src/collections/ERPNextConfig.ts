@@ -97,7 +97,7 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
     if (!decryptedKey || !decryptedSecret) return doc
 
     const normalizedUrl = erpnextUrl.replace(/\/+$/, '')
-    if (!normalizedUrl.startsWith('https://')) return doc
+    if (process.env.NODE_ENV === 'production' && !normalizedUrl.startsWith('https://')) return doc
 
     const headers = {
         'Content-Type': 'application/json',
@@ -463,19 +463,88 @@ export const ERPNextConfig: CollectionConfig = {
                             },
                         },
                         {
-                            name: 'erpnextCompletedCustomerGroup',
+                            type: 'row',
+                            fields: [
+                                {
+                                    name: 'webhookDocType',
+                                    type: 'text',
+                                    defaultValue: 'Sales Order',
+                                    admin: {
+                                        width: '50%',
+                                        description: 'ERPNext DocType that triggers this webhook (e.g. Sales Order, Delivery Note, Job Card).',
+                                    },
+                                },
+                                {
+                                    name: 'webhookTargetCollection',
+                                    type: 'text',
+                                    defaultValue: 'orders',
+                                    admin: {
+                                        width: '50%',
+                                        description: 'Payload collection to update when the webhook fires (e.g. orders, jobs).',
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            type: 'row',
+                            fields: [
+                                {
+                                    name: 'webhookTargetKeyField',
+                                    type: 'text',
+                                    defaultValue: 'erpnext_so_name',
+                                    admin: {
+                                        width: '50%',
+                                        description: 'Payload field that stores the ERPNext document name (used to match the incoming doc).',
+                                    },
+                                },
+                                {
+                                    name: 'webhookStatusField',
+                                    type: 'text',
+                                    defaultValue: 'status',
+                                    admin: {
+                                        width: '50%',
+                                        description: 'Payload field to update with the mapped status.',
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            type: 'row',
+                            fields: [
+                                {
+                                    name: 'webhookNotifyField',
+                                    type: 'text',
+                                    defaultValue: 'review_notify_after',
+                                    admin: {
+                                        width: '50%',
+                                        description: 'Optional Payload datetime field to set for delayed notifications (leave blank to disable).',
+                                    },
+                                },
+                                {
+                                    name: 'webhookCustomerGroupField',
+                                    type: 'text',
+                                    defaultValue: 'custom_phone',
+                                    admin: {
+                                        width: '50%',
+                                        description: 'Optional ERPNext field used to look up the customer for group promotion (leave blank to disable promotion).',
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            name: 'webhookCompletedCustomerGroup',
                             type: 'text',
                             defaultValue: 'TOG Completed',
                             admin: {
-                                description: 'ERPNext Customer Group to promote paid customers into when an order is Confirmed. Override per site (e.g. SBA Completed).',
+                                description: 'ERPNext Customer Group to promote customers into when the mapped "Confirmed"-like status fires. Only used when webhookCustomerGroupField is set.',
                             },
                         },
                         {
                             name: 'erpnextStatusMappings',
                             type: 'array',
-                            label: 'ERPNext Order Status Mappings',
+                            label: 'ERPNext Status Mappings',
                             admin: {
-                                description: 'Maps inbound ERPNext order statuses to Payload order statuses, notification templates, and optional review delays. Used by POST /api/webhooks/erpnext?site=<site-slug>.',
+                                description: 'Maps inbound ERPNext statuses to Payload statuses, notification templates, and optional delays. Used by POST /api/webhooks/erpnext?site=<site-slug>.',
                             },
                             defaultValue: [
                                 { erpStatus: 'Confirmed', payloadStatus: 'confirmed', template: 'tog_order_confirmed' },
