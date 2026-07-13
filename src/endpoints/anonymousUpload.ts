@@ -1,4 +1,5 @@
 import type { Endpoint, CollectionSlug } from 'payload'
+import { timingSafeEqual } from 'node:crypto'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 
 /** Normalize an origin to `protocol://hostname:port`, omitting default ports. */
@@ -24,8 +25,29 @@ const ALLOWED_MIME_TYPES = [
  * Validate the request origin against the CMS public URL and any explicitly
  * trusted origins. Anonymous uploads are intended for browser forms; requiring
  * an origin blocks abuse from arbitrary third-party sites.
+ *
+ * Also accepts a server-to-server caller presenting X-Internal-Key (reusing
+ * ERPNEXT_PROXY_KEY, the secret already used for this plugin's other
+ * server-to-server proxy endpoints, rather than introducing a new one).
+ * A Next.js Server Action's own `fetch` carries no Origin/Referer header at
+ * all — without this branch, every server-to-server call (e.g. a job-
+ * application form's resume upload) always fell through to the "no origin"
+ * check below, which unconditionally denies in production regardless of who
+ * the caller actually is.
  */
 function isTrustedOrigin(req: any): boolean {
+    const internalKey = process.env.ERPNEXT_PROXY_KEY
+    if (internalKey) {
+        const provided = req.headers.get('x-internal-key') || ''
+        if (provided.length === internalKey.length) {
+            try {
+                if (timingSafeEqual(Buffer.from(provided), Buffer.from(internalKey))) return true
+            } catch {
+                /* fall through to origin checks */
+            }
+        }
+    }
+
     const origin = req.headers.get('origin') || req.headers.get('referer') || ''
 
     // No origin is unusual for a real browser form POST. In production, require

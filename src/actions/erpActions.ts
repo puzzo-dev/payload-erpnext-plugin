@@ -138,9 +138,37 @@ export async function erpPostHandler(ctx: any): Promise<any> {
     docData[erpField] = resolveValue(sourceTemplate, workflowContext)
   }
 
+  const prefix = (step.result_key as string) || 'erp'
+
+  // Idempotency: when the step declares `unique_by`, check for an existing
+  // ERPNext record with that field's value before creating. Workflow runs
+  // are at-least-once (a double-submitted form, or a job-queue retry after
+  // a partial failure both re-run this step), and unlike cms-create this
+  // has no local unique DB index to fall back on — without this check, the
+  // same customer/lead ends up duplicated in ERPNext on every retry.
+  // Narrows, but (being a separate GET+POST rather than one atomic
+  // operation) does not fully eliminate, the race between two concurrent
+  // runs for the same input.
+  const uniqueBy = step.unique_by as string | undefined
+  const uniqueVal = uniqueBy ? docData[uniqueBy] : undefined
+  if (uniqueBy && uniqueVal !== undefined && uniqueVal !== null && uniqueVal !== '') {
+    const qs = new URLSearchParams({
+      fields: '["name"]',
+      filters: JSON.stringify([[doctype, uniqueBy, '=', uniqueVal]]),
+      limit_page_length: '1',
+    })
+    const existing = await erpCall(creds, `/api/resource/${encodeURIComponent(doctype)}?${qs}`)
+    const existingName = (existing.data as any[])?.[0]?.name as string | undefined
+    if (existingName) {
+      return {
+        success: true,
+        data: { [`${prefix}_name`]: existingName, [`${prefix}_doctype`]: doctype, [`${prefix}_deduped`]: true, erp_company: creds.company },
+      }
+    }
+  }
+
   const res = await erpCall(creds, `/api/resource/${encodeURIComponent(doctype)}`, 'POST', docData)
   const createdName = res.data?.name as string
-  const prefix = (step.result_key as string) || 'erp'
 
   return { success: true, data: { [`${prefix}_name`]: createdName, [`${prefix}_doctype`]: doctype, erp_company: creds.company } }
 }

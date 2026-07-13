@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { FieldLabel, SelectInput, TextInput } from '@payloadcms/ui'
+import { Button, FieldLabel, SelectInput, TextInput } from '@payloadcms/ui'
 
 export const fieldWrapperStyle: React.CSSProperties = {
     marginBottom: '1.5rem',
@@ -84,39 +84,10 @@ export const SuccessState: React.FC<{ message: string }> = ({ message }) => (
 )
 
 export const ConnectButton: React.FC<{ onClick: () => void; disabled?: boolean; children: React.ReactNode }> = ({ onClick, disabled, children }) => (
-    <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        className="btn btn--style-primary"
-        style={{ cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1 }}
-    >
+    <Button type="button" buttonStyle="primary" size="medium" disabled={disabled} onClick={onClick}>
         {children}
-    </button>
+    </Button>
 )
-
-/** Reads and clears a query param left by an OAuth redirect callback, without a full reload. */
-export function useOAuthRedirectMessage(successParam: string, errorParam: string): { success: boolean; error: string | null } {
-    const [state, setState] = React.useState<{ success: boolean; error: string | null }>({ success: false, error: null })
-
-    React.useEffect(() => {
-        if (typeof window === 'undefined') return
-        const params = new URLSearchParams(window.location.search)
-        const success = params.get(successParam) === '1'
-        const error = params.get(errorParam)
-        if (success || error) {
-            setState({ success, error })
-            params.delete(successParam)
-            params.delete(errorParam)
-            const newSearch = params.toString()
-            const newUrl = `${window.location.pathname}${newSearch ? `?${newSearch}` : ''}`
-            window.history.replaceState({}, '', newUrl)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    return state
-}
 
 interface StyledSelectProps {
     path: string

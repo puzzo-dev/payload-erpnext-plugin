@@ -166,6 +166,15 @@ export interface ERPNextHostBindings {
     systemEvents?: Record<string, string>
     /** CMS internal-auth guard — enables the customer→ERPNext link endpoint. */
     isInternalAuth?: (req: any) => boolean
+    /**
+     * Site slug -> collection slugs the host considers "local" to that site
+     * (its own admin-sidebar visibility map, typically). Enables the
+     * /cms-collections endpoint to scope the ERPNext Sync Rules "target
+     * collection" picker to the rule's own site instead of listing every
+     * collection in the system. Optional — without it the picker falls back
+     * to listing everything, ungrouped, same as before this binding existed.
+     */
+    siteCollectionsMap?: Record<string, string[]>
 }
 
 /**

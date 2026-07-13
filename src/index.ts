@@ -12,11 +12,12 @@ import {
 import { fetchCompaniesEndpoint } from './endpoints/fetchCompanies'
 import { fetchDocTypesEndpoint } from './endpoints/fetchDocTypes'
 import { fetchDocTypeFieldsEndpoint } from './endpoints/fetchDocTypeFields'
-import { fetchCmsCollectionsEndpoint } from './endpoints/fetchCmsCollections'
+import { fetchCustomerGroupsEndpoint } from './endpoints/fetchCustomerGroups'
+import { createFetchCmsCollectionsEndpoint } from './endpoints/fetchCmsCollections'
 import { fetchCmsCollectionFieldsEndpoint } from './endpoints/fetchCmsCollectionFields'
 import { retryDeadLettersEndpoint } from './endpoints/retryDeadLetters'
 import { syncFromERPNextEndpoint } from './endpoints/syncFromERPNext'
-import { erpnextOAuthStartEndpoint, erpnextOAuthCallbackEndpoint } from './endpoints/erpnextOAuth'
+import { erpnextOAuthAutoConnectEndpoint } from './endpoints/erpnextOAuth'
 import { erpGetHandler, erpPostHandler, erpPatchHandler, erpDeleteHandler } from './actions/erpActions'
 import { createConnectionMonitorHook } from './hooks/connectionMonitor'
 import { createLinkErpnextCustomerEndpoint } from './endpoints/linkErpnextCustomer'
@@ -93,15 +94,15 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
             fetchCompaniesEndpoint,
             fetchDocTypesEndpoint,
             fetchDocTypeFieldsEndpoint,
+            fetchCustomerGroupsEndpoint,
             // CMS introspection for sync-rule dropdowns (target collection + its fields).
-            fetchCmsCollectionsEndpoint,
+            createFetchCmsCollectionsEndpoint(options.host?.siteCollectionsMap),
             fetchCmsCollectionFieldsEndpoint,
             retryDeadLettersEndpoint,
             // Inbound ERPNext/Frappe webhooks — the plugin owns all ERP ingress.
             syncFromERPNextEndpoint,
-            // ERPNext OAuth2 Connect flow — alternative to manual API Key/Secret entry.
-            erpnextOAuthStartEndpoint,
-            erpnextOAuthCallbackEndpoint,
+            // ERPNext OAuth2 "Connect via login" flow — alternative to manual API Key/Secret entry.
+            erpnextOAuthAutoConnectEndpoint,
         ]
 
         if (enableAnonymousUpload) {
@@ -207,6 +208,14 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
                                             admin: { description: 'Static value or variable (e.g. {{doc.status}})' }
                                         }
                                     ]
+                                },
+                                {
+                                    name: 'unique_by',
+                                    type: 'text',
+                                    admin: {
+                                        description: 'Only used for Create (POST). ERPNext field name (from Field Mapping above, e.g. "email") to check for an existing record before creating — prevents duplicate ERPNext records if this step runs twice for the same input (a double-submitted form, or a job-queue retry after a partial failure). Leave empty to always create.',
+                                        condition: (_data: unknown, siblingData: any) => siblingData?.action === 'POST',
+                                    },
                                 },
                             ],
                         }

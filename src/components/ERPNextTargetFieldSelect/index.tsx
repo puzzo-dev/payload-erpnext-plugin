@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { useField, useForm } from '@payloadcms/ui'
+import { useField } from '@payloadcms/ui'
 
 import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, type SelectOption } from '../shared'
 
@@ -12,24 +12,31 @@ interface Option {
 
 export const ERPNextTargetFieldSelect: React.FC<{ path: string }> = ({ path }) => {
   const { value, setValue } = useField<string>({ path })
-  const { getData } = useForm()
+
+  // Resolve the doctype this field belongs to. Two layouts are supported:
+  //  - Workflows: path is `steps.N.field_mapping.M.target_field` → doctype at `steps.N.doctype`
+  //  - ERPNext Sync Rules: path is `field_mappings.M.erp_field` → doctype at root `doctype`
+  // `path` is a static prop for a mounted field instance, so this is safe to
+  // compute once rather than needing to be part of the reactive dependency.
+  const parts = path.split('.')
+  const stepsIndex = parts.findIndex(p => p === 'steps')
+  const doctypePath = stepsIndex !== -1 ? `steps.${parts[stepsIndex + 1]}.doctype` : 'doctype'
+
+  // Reactive, not read-once-on-mount via getData() (deps: [getData, path] —
+  // neither ever changes after mount, so picking a site/doctype after the
+  // component first rendered — always true, since neither is set yet when a
+  // brand-new document's form first loads — never re-triggered the fetch,
+  // and the "select a site/doctype first" message just sat there forever).
+  const { value: siteValue } = useField<string | number | { id: string | number } | null>({ path: 'site' })
+  const { value: doctypeValue } = useField<string | null>({ path: doctypePath })
+
   const [options, setOptions] = useState<Option[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    // Resolve the doctype this field belongs to. Two layouts are supported:
-    //  - Workflows: path is `steps.N.field_mapping.M.target_field` → doctype at `steps.N.doctype`
-    //  - ERPNext Sync Rules: path is `field_mappings.M.erp_field` (or `upsert_erp_field`) → doctype at root `doctype`
-    const parts = path.split('.')
-    const data = getData() as any
-    const siteObj = data?.site
-    const siteId = typeof siteObj === 'object' && siteObj !== null ? siteObj.id : siteObj
-
-    const stepsIndex = parts.findIndex(p => p === 'steps')
-    const doctype = stepsIndex !== -1
-      ? data?.steps?.[parts[stepsIndex + 1]]?.doctype
-      : data?.doctype
+    const siteId = typeof siteValue === 'object' && siteValue !== null ? siteValue.id : siteValue
+    const doctype = doctypeValue
 
     if (!siteId) {
       setOptions([])
@@ -58,7 +65,7 @@ export const ERPNextTargetFieldSelect: React.FC<{ path: string }> = ({ path }) =
         setError(err.message)
       })
       .finally(() => setLoading(false))
-  }, [getData, path])
+  }, [siteValue, doctypeValue])
 
   const selectOptions = useMemo<SelectOption[]>(() =>
     options.map((opt) => ({

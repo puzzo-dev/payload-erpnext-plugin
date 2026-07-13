@@ -10,7 +10,7 @@
  * Key generation: openssl rand -hex 32
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, createHmac, timingSafeEqual } from 'crypto'
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 
 const ALGORITHM = 'aes-256-gcm'
 const IV_LENGTH = 12 // GCM standard
@@ -107,46 +107,3 @@ export function decryptCredential(stored: string): string {
     }
 }
 
-// ── OAuth state signing ──────────────────────────────────────────────
-//
-// The OAuth authorize→callback round trip goes through the ERPNext instance's
-// servers and back — there's no server-side session to carry the configId
-// across that redirect. Instead of a session store, sign `configId:timestamp`
-// with an HMAC so the callback can verify the state param wasn't forged or
-// replayed from an old request, without any server-side state.
-
-const STATE_TTL_MS = 10 * 60 * 1000 // 10 minutes — long enough for a user to complete the OAuth consent screen
-
-function getStateSecret(): string {
-    return process.env.ERPNEXT_OAUTH_STATE_SECRET || process.env.ERPNEXT_ENCRYPTION_KEY || 'insecure-dev-only-state-secret'
-}
-
-/** Sign a configId into an opaque, tamper-evident state token for the OAuth `state` param. */
-export function signOAuthState(configId: string | number): string {
-    const payload = `${configId}:${Date.now()}`
-    const sig = createHmac('sha256', getStateSecret()).update(payload).digest('hex')
-    return Buffer.from(`${payload}:${sig}`).toString('base64url')
-}
-
-/** Verify and decode a state token. Returns the configId, or null if invalid/expired/tampered. */
-export function verifyOAuthState(state: string): string | null {
-    try {
-        const decoded = Buffer.from(state, 'base64url').toString('utf8')
-        const parts = decoded.split(':')
-        if (parts.length !== 3) return null
-        const [configId, timestampStr, sig] = parts
-        const payload = `${configId}:${timestampStr}`
-        const expected = createHmac('sha256', getStateSecret()).update(payload).digest('hex')
-
-        const a = Buffer.from(sig)
-        const b = Buffer.from(expected)
-        if (a.length !== b.length || !timingSafeEqual(a, b)) return null
-
-        const timestamp = Number(timestampStr)
-        if (!Number.isFinite(timestamp) || Date.now() - timestamp > STATE_TTL_MS) return null
-
-        return configId
-    } catch {
-        return null
-    }
-}

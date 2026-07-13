@@ -57,9 +57,15 @@ export interface ERPNextSyncRule {
     site: string | number | { id: string | number }
     doctype: string
     targetCollection: string
-    upsert_erp_field: string
-    upsert_payload_field: string
-    field_mappings?: Array<{ erp_field?: string | null; payload_field?: string | null }>
+    /**
+     * Exactly one row must have isUpsertKey: true — that row's erp_field/payload_field
+     * pair IS the unique key used to match an incoming ERP record to an existing Payload
+     * document. There used to be a separate standalone upsert_erp_field/upsert_payload_field
+     * pair, which meant an admin configuring "this field is both mapped AND the key" had to
+     * enter the same field twice. field_mappings is now the single source of truth — see
+     * getUpsertKeyMapping().
+     */
+    field_mappings?: Array<{ erp_field?: string | null; payload_field?: string | null; isUpsertKey?: boolean | null }>
     constant_values?: Array<{ payload_field?: string | null; value?: string | null }>
     /** Raw ERPNext REST filter (e.g. [["has_variants","=",0]]) applied to the backfill query. */
     filters?: unknown
@@ -87,16 +93,27 @@ export function resolveSiteId(site: ERPNextSyncRule['site']): string | number {
     return typeof site === 'object' && site !== null ? site.id : site
 }
 
+/**
+ * The field_mappings row marked as the unique key. Returns null if no row is
+ * marked (the collection's own validation should prevent saving that state,
+ * but callers still fail closed — skip rather than guess — if it happens).
+ */
+export function getUpsertKeyMapping(rule: ERPNextSyncRule): { erp_field: string; payload_field: string } | null {
+    const found = rule.field_mappings?.find((m) => m.isUpsertKey && m.erp_field && m.payload_field)
+    if (!found?.erp_field || !found?.payload_field) return null
+    return { erp_field: found.erp_field, payload_field: found.payload_field }
+}
+
 /** Map one ERPNext record onto Payload field names using the rule's field map. */
 export function mapErpRecord(rule: ERPNextSyncRule, erpRecord: Record<string, unknown>): Record<string, unknown> {
     const out: Record<string, unknown> = {}
+    // The upsert-key row is itself a normal field_mappings row (isUpsertKey just marks
+    // which one it is), so this loop already copies it — no separate assignment needed.
     for (const m of rule.field_mappings ?? []) {
         if (m.erp_field && m.payload_field) {
             out[m.payload_field] = erpRecord[m.erp_field]
         }
     }
-    // Always persist the upsert key so future syncs can find this doc again.
-    out[rule.upsert_payload_field] = erpRecord[rule.upsert_erp_field]
     // Owner-declared constant/default values for required target fields the ERP does
     // not carry (e.g. category, item_type). Applied last so they always win.
     for (const c of rule.constant_values ?? []) {
@@ -107,10 +124,9 @@ export function mapErpRecord(rule: ERPNextSyncRule, erpRecord: Record<string, un
     return out
 }
 
-/** The ERPNext field names a rule needs fetched (mapped fields + the upsert key). */
+/** The ERPNext field names a rule needs fetched — just the field_mappings, the upsert key is one of them. */
 export function erpFetchFields(rule: ERPNextSyncRule): string[] {
     const fields = new Set<string>()
-    fields.add(rule.upsert_erp_field)
     for (const m of rule.field_mappings ?? []) {
         if (m.erp_field) fields.add(m.erp_field)
     }
@@ -121,6 +137,7 @@ export function erpFetchFields(rule: ERPNextSyncRule): string[] {
 async function findExisting(
     req: PayloadRequest,
     rule: ERPNextSyncRule,
+    keyMapping: { erp_field: string; payload_field: string },
     keyValue: unknown,
     siteId: string | number,
 ): Promise<{ id: string | number } | null> {
@@ -128,7 +145,7 @@ async function findExisting(
         collection: rule.targetCollection as CollectionSlug,
         where: {
             and: [
-                { [rule.upsert_payload_field]: { equals: keyValue } },
+                { [keyMapping.payload_field]: { equals: keyValue } },
                 { site: { equals: siteId } },
             ],
         },
@@ -204,9 +221,14 @@ export async function upsertErpRecord(
     creds?: ERPNextCredentials,
     log?: LogFn,
 ): Promise<{ action: 'created' | 'updated' | 'skipped'; id?: string | number; key?: unknown }> {
-    const keyValue = erpRecord[rule.upsert_erp_field]
+    const keyMapping = getUpsertKeyMapping(rule)
+    if (!keyMapping) {
+        log?.('warn', 'No field mapping marked as the unique key — skipping', { doctype: rule.doctype })
+        return { action: 'skipped' }
+    }
+    const keyValue = erpRecord[keyMapping.erp_field]
     if (keyValue === undefined || keyValue === null || keyValue === '') {
-        log?.('warn', `Record missing upsert key "${rule.upsert_erp_field}" — skipping`, { doctype: rule.doctype })
+        log?.('warn', `Record missing upsert key "${keyMapping.erp_field}" — skipping`, { doctype: rule.doctype })
         return { action: 'skipped' }
     }
 
@@ -215,7 +237,7 @@ export async function upsertErpRecord(
     // with drafts enabled, `_status: 'published'` publishes them (otherwise they'd land as
     // drafts and never appear); on non-draft collections Payload ignores the extra key.
     data._status = 'published'
-    const existing = await findExisting(req, rule, keyValue, siteId)
+    const existing = await findExisting(req, rule, keyMapping, keyValue, siteId)
 
     if (existing) {
         await req.payload.update({
@@ -238,11 +260,38 @@ export async function upsertErpRecord(
         if (org) createData.organization = typeof org === 'object' ? (org as { id: unknown }).id : org
     } catch { /* site without organization — non-fatal */ }
 
-    const created = await req.payload.create({
-        collection: rule.targetCollection as CollectionSlug,
-        data: createData as never,
-        overrideAccess: true,
-    })
+    // findExisting + create is not atomic: if ERPNext resends the same
+    // webhook (a documented Frappe retry behavior) or a backfill runs
+    // concurrently with a live webhook for the same record, two calls can
+    // both find nothing and both create — a duplicate Payload document for
+    // the same ERP key. If the target collection has a unique index
+    // covering the upsert key (recommended, but not enforced here since
+    // targetCollection is admin-configurable to any collection), Postgres
+    // rejects the second insert; treat that as "someone else just created
+    // it" and fall back to an update instead of surfacing an error.
+    let created
+    try {
+        created = await req.payload.create({
+            collection: rule.targetCollection as CollectionSlug,
+            data: createData as never,
+            overrideAccess: true,
+        })
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const isDuplicateKey = /duplicate key|unique constraint|already exists/i.test(msg)
+        if (!isDuplicateKey) throw err
+        const raceWinner = await findExisting(req, rule, keyMapping, keyValue, siteId)
+        if (!raceWinner) throw err // Genuinely not a dedup-able race — surface the original error.
+        await req.payload.update({
+            collection: rule.targetCollection as CollectionSlug,
+            id: raceWinner.id,
+            data: data as never,
+            overrideAccess: true,
+        })
+        log?.('info', `Updated ${rule.targetCollection} (lost create race, fell back to update)`, { key: keyValue, id: raceWinner.id })
+        await applyStatusSync(req, rule, erpRecord, raceWinner.id, creds, log)
+        return { action: 'updated', id: raceWinner.id, key: keyValue }
+    }
     log?.('info', `Created ${rule.targetCollection}`, { key: keyValue, id: created.id })
     await applyStatusSync(req, rule, erpRecord, created.id, creds, log)
     return { action: 'created', id: created.id, key: keyValue }
@@ -256,10 +305,12 @@ export async function deleteErpRecord(
     siteId: string | number,
     log?: LogFn,
 ): Promise<{ action: 'deleted' | 'skipped'; id?: string | number }> {
-    const keyValue = erpRecord[rule.upsert_erp_field]
+    const keyMapping = getUpsertKeyMapping(rule)
+    if (!keyMapping) return { action: 'skipped' }
+    const keyValue = erpRecord[keyMapping.erp_field]
     if (keyValue === undefined || keyValue === null || keyValue === '') return { action: 'skipped' }
 
-    const existing = await findExisting(req, rule, keyValue, siteId)
+    const existing = await findExisting(req, rule, keyMapping, keyValue, siteId)
     if (!existing) return { action: 'skipped' }
 
     await req.payload.delete({

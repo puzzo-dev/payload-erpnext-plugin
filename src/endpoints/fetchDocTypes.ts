@@ -1,7 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
-import { decryptCredential } from '../utils/erpnextCrypto';
 import { getUserSiteId, type UserWithRole } from '../types';
+import { getCredentials, authHeaders } from './erpnextProxy';
 
 /**
  * GET /api/erpnext-doctypes?siteId={siteId}&siteSlug={siteSlug}
@@ -73,50 +73,28 @@ export const fetchDocTypesEndpoint: Endpoint = {
                 overrideAccess: true,
             })
 
-            const site = sites.docs[0] as unknown as { id: string | number } | undefined
+            const site = sites.docs[0] as unknown as { id: string | number; slug?: string } | undefined
             if (!site) {
                 return Response.json({ error: 'Site not found' }, { status: 404 })
             }
 
-            const configs = await req.payload.find({
-                collection: 'erpnext-config' as unknown as CollectionSlug,
-                where: { site: { equals: site.id }, isActive: { equals: true } },
-                limit: 1,
-                depth: 0,
-                overrideAccess: true,
-                context: { preventMasking: true },
-            })
-
-            const cfg = configs.docs[0] as unknown as {
-                erpnextUrl?: string
-                apiKey?: string
-                apiSecret?: string
-            } | undefined
-
-            if (!cfg) {
-                return Response.json({ error: 'No active ERPNext config for this site' }, { status: 400 })
-            }
-
-            const erpnextUrl = (cfg.erpnextUrl || '').replace(/\/+$/, '')
-            if (process.env.NODE_ENV === 'production' && !erpnextUrl.startsWith('https://')) {
-                return Response.json({ error: 'Only HTTPS ERPNext URLs are allowed' }, { status: 400 })
-            }
-
-            const apiKey = decryptCredential(cfg.apiKey || '')
-            const apiSecret = decryptCredential(cfg.apiSecret || '')
-            if (!apiKey || !apiSecret) {
-                return Response.json({ error: 'ERPNext credentials are missing' }, { status: 400 })
+            // getCredentials() correctly branches between api_key and oauth
+            // authMethod (and transparently refreshes an expired OAuth
+            // token) — the previous direct apiKey/apiSecret read here
+            // predated OAuth support and hardcoded the api_key path, so
+            // this endpoint (the DocType picker used throughout the
+            // sync-rules admin UI) always 400'd for any OAuth-connected site.
+            const creds = await getCredentials(req.payload, site.slug)
+            if (!creds) {
+                return Response.json({ error: 'No active ERPNext config, or credentials are missing, for this site' }, { status: 400 })
             }
 
             // Fetch DocTypes from ERPNext
-            const doctypesUrl = `${erpnextUrl}/api/resource/DocType?fields=["name","module","istable","issingle"]&limit_page_length=500`
+            const doctypesUrl = `${creds.url}/api/resource/DocType?fields=["name","module","istable","issingle"]&limit_page_length=500`
 
             const response = await fetch(doctypesUrl, {
                 method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `token ${apiKey}:${apiSecret}`,
-                },
+                headers: authHeaders(creds),
                 signal: AbortSignal.timeout(15_000),
             })
 

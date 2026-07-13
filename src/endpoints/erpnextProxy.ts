@@ -33,7 +33,7 @@ const ALLOWED_SUBMIT_DOCTYPES = [
 const ALLOWED_READ_DOCTYPES = [
     ...ALLOWED_SUBMIT_DOCTYPES,
     'Blog Category', 'Job Opening', 'Ticket Type', 'HD Ticket Type', 'User', 'Newsletter',
-    'Company',
+    'Company', 'Customer',
 ]
 
 const PUBLIC_READ_DOCTYPES = [
@@ -49,6 +49,37 @@ const COMPANY_AWARE_DOCTYPES = new Set([
     'Lead', 'Contact', 'Customer', 'Job Applicant', 'Job Opening',
     'Ticket', 'HD Ticket', 'Issue',
 ])
+
+/**
+ * In-flight OAuth-refresh de-duplication, keyed by configId. Every proxy/sync
+ * request calls getCredentials() independently, with no shared state — if two
+ * requests for the same site arrive at (or after) token expiry, each would
+ * otherwise call refreshOAuthToken() with the SAME stored refresh_token. If
+ * Frappe rotates refresh tokens on use (standard OAuth2 practice), the loser
+ * of that race gets an invalid refresh token and the DB write ordering could
+ * leave a corrupted/stale token persisted, requiring a full manual reconnect.
+ * Concurrent callers now await the one in-flight refresh instead of each
+ * issuing their own.
+ */
+const inFlightRefreshes = new Map<string, Promise<{ accessToken: string; expiresAt: string } | null>>()
+
+/** Best-effort — a failure here must never block the caller from getting its (null) credentials result. */
+async function markDisconnected(
+    payload: Parameters<Endpoint['handler']>[0]['payload'],
+    configId: string | number,
+): Promise<void> {
+    try {
+        await payload.update({
+            collection: 'erpnext-config' as unknown as CollectionSlug,
+            id: configId,
+            data: { connectionStatus: 'disconnected' } as any,
+            overrideAccess: true,
+            context: { skipAutoFetch: true },
+        })
+    } catch (err) {
+        payload.logger.warn(`[ERPNext-Proxy] Failed to mark config ${configId} disconnected: ${err}`)
+    }
+}
 
 /**
  * Resolve ERPNext credentials from the erpnext-config collection.
@@ -149,13 +180,32 @@ export async function getCredentials(
             const rawClientSecret = cfg.oauthClientSecret as string | undefined
             const clientSecret = rawClientSecret?.startsWith('enc:') ? decryptCredential(rawClientSecret) : rawClientSecret
             const refreshToken = rawRefreshToken?.startsWith('enc:') ? decryptCredential(rawRefreshToken) : rawRefreshToken
+            const configKey = String(cfg.id)
 
             if (!refreshToken || !rawClientId || !clientSecret) {
                 payload.logger.warn(`[ERPNext-Proxy] OAuth token expired for config ${cfg.id} and no refresh token/client credentials available`)
+                await markDisconnected(payload, cfg.id as string | number)
                 return null
             }
-            const refreshed = await refreshOAuthToken(payload, cfg.id as string | number, url, rawClientId, clientSecret, refreshToken)
-            if (!refreshed) return null
+
+            // Serialize concurrent refresh attempts for the same config —
+            // see inFlightRefreshes' comment above.
+            let refreshPromise = inFlightRefreshes.get(configKey)
+            if (!refreshPromise) {
+                refreshPromise = refreshOAuthToken(payload, cfg.id as string | number, url, rawClientId, clientSecret, refreshToken)
+                    .finally(() => inFlightRefreshes.delete(configKey))
+                inFlightRefreshes.set(configKey, refreshPromise)
+            }
+            const refreshed = await refreshPromise
+            if (!refreshed) {
+                // Previously nothing ever marked a dead OAuth connection as
+                // disconnected — autoFetchFromERPNext (the only other code
+                // that re-tests connectionStatus) explicitly skips re-testing
+                // once already connected, so the admin UI showed "Connected"
+                // indefinitely after the real token had died.
+                await markDisconnected(payload, cfg.id as string | number)
+                return null
+            }
             accessToken = refreshed.accessToken
         }
 

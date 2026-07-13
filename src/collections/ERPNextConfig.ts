@@ -4,6 +4,7 @@ import {
 } from '../access/roles';
 import { organizationField } from '../fields/organizationField';
 import { encryptCredential, decryptCredential } from '../utils/erpnextCrypto';
+import { getCredentials, authHeaders } from '../endpoints/erpnextProxy';
 import type { ERPNextCompany, UserWithRole } from '../types';
 
 /**
@@ -19,19 +20,26 @@ const adminOrAboveField: FieldAccess = ({ req }) =>
 
 // ── Credential encryption hooks (reused by apiKey, apiSecret, webhookSecret) ──
 
-async function encryptBeforeChange({ value, previousDoc, field, req }: { value: unknown; previousDoc?: Record<string, unknown>; field: { name: string }, req: any }) {
+async function encryptBeforeChange({ value, originalDoc, field, req }: { value: unknown; originalDoc?: Record<string, unknown>; field: { name: string }, req: any }) {
     if (typeof value === 'string' && value && !value.startsWith('••••')) {
         return encryptCredential(value)
     }
     if (typeof value === 'string' && value.startsWith('••••')) {
-        if (!previousDoc?.id) {
+        // `previousDoc` is only ever populated in afterChange hooks — Payload's
+        // own beforeChange field-hook invocation (fields/hooks/beforeChange/promise.js)
+        // never passes it, only `originalDoc`. Using previousDoc here meant this
+        // recovery path threw unconditionally on every resave of a document with
+        // an already-encrypted field the admin didn't touch (e.g. re-saving after
+        // OAuth connect populates oauthAccessToken/oauthClientSecret, then the
+        // admin form resubmits their masked display values unchanged).
+        if (!originalDoc?.id) {
             throw new Error(`Cannot save masked credential for ${field.name}. Please re-enter the API Key/Secret.`)
         }
-        // previousDoc has already passed through afterRead hooks and is masked.
+        // originalDoc has already passed through afterRead hooks and is masked.
         // We must fetch the raw document from the database to restore the encrypted value.
         const rawConfig = await req.payload.findByID({
             collection: 'erpnext-config' as unknown as CollectionSlug,
-            id: previousDoc.id,
+            id: originalDoc.id,
             depth: 0,
             overrideAccess: true,
             context: { preventMasking: true, skipAutoFetch: true },
@@ -74,35 +82,35 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
         }
     }
 
-    // CRITICAL: The `doc` passed to afterChange has already been through afterRead
-    // hooks, which MASK apiKey/apiSecret for logged-in users (e.g. "••••xxxx").
-    // We must re-fetch with preventMasking to get the real credentials.
-    const rawConfig = await req.payload.findByID({
-        collection: 'erpnext-config' as unknown as CollectionSlug,
-        id: doc.id,
-        depth: 0,
-        overrideAccess: true,
-        context: { preventMasking: true, skipAutoFetch: true },
-    }) as unknown as Record<string, unknown>
+    // getCredentials() branches correctly between api_key and oauth authMethod
+    // (and transparently refreshes an expired OAuth token) — the previous
+    // direct apiKey/apiSecret read here predated OAuth support and hardcoded
+    // the api_key path, so a fresh OAuth-only connect silently never fetched
+    // companies at all (no error, just a no-op return here, since apiKey/
+    // apiSecret are never set for an OAuth connection).
+    const siteRelation = doc.site as { id?: string | number; slug?: string } | string | number | null | undefined
+    let siteSlug = typeof siteRelation === 'object' && siteRelation !== null ? siteRelation.slug : undefined
+    if (!siteSlug) {
+        const siteId = typeof siteRelation === 'object' && siteRelation !== null ? siteRelation.id : siteRelation
+        if (siteId) {
+            const siteDoc = await req.payload.findByID({
+                collection: 'sites' as unknown as CollectionSlug,
+                id: siteId,
+                depth: 0,
+                overrideAccess: true,
+            }).catch(() => null)
+            siteSlug = (siteDoc as unknown as { slug?: string } | null)?.slug
+        }
+    }
+    if (!siteSlug) return doc
 
-    const apiKey = rawConfig.apiKey as string | undefined
-    const apiSecret = rawConfig.apiSecret as string | undefined
+    const creds = await getCredentials(req.payload, siteSlug, req)
+    if (!creds) return doc
 
-    if (!apiKey || !apiSecret) return doc
-
-    // Decrypt credentials (stored encrypted in DB)
-    const decryptedKey = decryptCredential(apiKey)
-    const decryptedSecret = decryptCredential(apiSecret)
-
-    if (!decryptedKey || !decryptedSecret) return doc
-
-    const normalizedUrl = erpnextUrl.replace(/\/+$/, '')
+    const normalizedUrl = creds.url
     if (process.env.NODE_ENV === 'production' && !normalizedUrl.startsWith('https://')) return doc
 
-    const headers = {
-        'Content-Type': 'application/json',
-        Authorization: `token ${decryptedKey}:${decryptedSecret}`,
-    }
+    const headers = authHeaders(creds)
 
     let companies: ERPNextCompany[] = []
     let connected = false
@@ -259,7 +267,7 @@ export const ERPNextConfig: CollectionConfig = {
                                 update: adminOrAboveField,
                             },
                             admin: {
-                                description: 'ERPNext instance URL (e.g. https://erp.example.com)',
+                                description: 'ERPNext instance URL (e.g. https://erp.ivarse.com)',
                             },
                         },
                         {
@@ -268,13 +276,18 @@ export const ERPNextConfig: CollectionConfig = {
                                 {
                                     name: 'apiKey',
                                     type: 'text',
-                                    // Not required when authMethod is 'oauth' — the OAuth Connect flow
-                                    // below populates oauthAccessToken instead. Static `required: true`
-                                    // would block saving an OAuth-only config.
-                                    validate: (value: unknown, { siblingData }: { siblingData?: Record<string, unknown> }) => {
-                                        if (siblingData?.authMethod === 'oauth') return true
-                                        return value ? true : 'API Key is required when using manual authentication.'
-                                    },
+                                    // Deliberately optional, not just conditionally required. authMethod
+                                    // is read-only and only ever flips to 'oauth' *after* a successful
+                                    // OAuth callback — which itself requires this document to already
+                                    // have an id (the Connect button only renders once saved). Gating
+                                    // this field's requirement on authMethod === 'oauth' therefore made
+                                    // the very first save of a brand-new OAuth-only config impossible:
+                                    // authMethod could never be 'oauth' yet, so apiKey was always
+                                    // required, so the document could never be saved, so Connect could
+                                    // never appear. getCredentials() (erpnextProxy.ts) already fails
+                                    // closed with a clear "not configured" error at USE time if neither
+                                    // manual credentials nor a completed OAuth connection exist, so
+                                    // nothing needs to be enforced here at save time.
                                     access: {
                                         create: adminOrAboveField,
                                         update: adminOrAboveField,
@@ -285,8 +298,8 @@ export const ERPNextConfig: CollectionConfig = {
                                     },
                                     hooks: {
                                         beforeChange: [
-                                            async ({ value, previousDoc, req }) =>
-                                                await encryptBeforeChange({ value, previousDoc, field: { name: 'apiKey' }, req }),
+                                            async ({ value, originalDoc, req }) =>
+                                                await encryptBeforeChange({ value, originalDoc, field: { name: 'apiKey' }, req }),
                                         ],
                                         afterRead: [
                                             ({ value, req, context }) =>
@@ -297,10 +310,7 @@ export const ERPNextConfig: CollectionConfig = {
                                 {
                                     name: 'apiSecret',
                                     type: 'text',
-                                    validate: (value: unknown, { siblingData }: { siblingData?: Record<string, unknown> }) => {
-                                        if (siblingData?.authMethod === 'oauth') return true
-                                        return value ? true : 'API Secret is required when using manual authentication.'
-                                    },
+                                    // See apiKey's comment above — same deliberately-optional reasoning.
                                     access: {
                                         create: adminOrAboveField,
                                         update: adminOrAboveField,
@@ -311,8 +321,8 @@ export const ERPNextConfig: CollectionConfig = {
                                     },
                                     hooks: {
                                         beforeChange: [
-                                            async ({ value, previousDoc, req }) =>
-                                                await encryptBeforeChange({ value, previousDoc, field: { name: 'apiSecret' }, req }),
+                                            async ({ value, originalDoc, req }) =>
+                                                await encryptBeforeChange({ value, originalDoc, field: { name: 'apiSecret' }, req }),
                                         ],
                                         afterRead: [
                                             ({ value, req, context }) =>
@@ -342,7 +352,8 @@ export const ERPNextConfig: CollectionConfig = {
                                     name: 'oauthClientId',
                                     type: 'text',
                                     admin: {
-                                        description: 'OAuth Client ID — create one in ERPNext under Settings → OAuth Client, with this field\'s Redirect URI set to {your CMS URL}/api/erpnext-oauth/callback.',
+                                        description: 'Set automatically by the Connect via OAuth flow below — no manual setup in ERPNext needed.',
+                                        readOnly: true,
                                         width: '50%',
                                     },
                                 },
@@ -350,11 +361,11 @@ export const ERPNextConfig: CollectionConfig = {
                                     name: 'oauthClientSecret',
                                     type: 'text',
                                     access: { create: adminOrAboveField, update: adminOrAboveField },
-                                    admin: { description: 'OAuth Client Secret', width: '50%' },
+                                    admin: { description: 'Set automatically by the Connect via OAuth flow below.', readOnly: true, width: '50%' },
                                     hooks: {
                                         beforeChange: [
-                                            async ({ value, previousDoc, req }) =>
-                                                await encryptBeforeChange({ value, previousDoc, field: { name: 'oauthClientSecret' }, req }),
+                                            async ({ value, originalDoc, req }) =>
+                                                await encryptBeforeChange({ value, originalDoc, field: { name: 'oauthClientSecret' }, req }),
                                         ],
                                         afterRead: [
                                             ({ value, req, context }) =>
@@ -382,8 +393,8 @@ export const ERPNextConfig: CollectionConfig = {
                             admin: { hidden: true, description: 'Internal — OAuth2 access token, set by Connect via OAuth.' },
                             hooks: {
                                 beforeChange: [
-                                    async ({ value, previousDoc, req }) =>
-                                        await encryptBeforeChange({ value, previousDoc, field: { name: 'oauthAccessToken' }, req }),
+                                    async ({ value, originalDoc, req }) =>
+                                        await encryptBeforeChange({ value, originalDoc, field: { name: 'oauthAccessToken' }, req }),
                                 ],
                                 afterRead: [
                                     ({ value, req, context }) =>
@@ -397,8 +408,8 @@ export const ERPNextConfig: CollectionConfig = {
                             admin: { hidden: true, description: 'Internal — OAuth2 refresh token, used to silently renew an expired access token.' },
                             hooks: {
                                 beforeChange: [
-                                    async ({ value, previousDoc, req }) =>
-                                        await encryptBeforeChange({ value, previousDoc, field: { name: 'oauthRefreshToken' }, req }),
+                                    async ({ value, originalDoc, req }) =>
+                                        await encryptBeforeChange({ value, originalDoc, field: { name: 'oauthRefreshToken' }, req }),
                                 ],
                                 afterRead: [
                                     ({ value, req, context }) =>
@@ -496,8 +507,8 @@ export const ERPNextConfig: CollectionConfig = {
                             },
                             hooks: {
                                 beforeChange: [
-                                    async ({ value, previousDoc, req }) =>
-                                        await encryptBeforeChange({ value, previousDoc, field: { name: 'webhookSecret' }, req }),
+                                    async ({ value, originalDoc, req }) =>
+                                        await encryptBeforeChange({ value, originalDoc, field: { name: 'webhookSecret' }, req }),
                                 ],
                                 afterRead: [
                                     ({ value, req, context }) =>

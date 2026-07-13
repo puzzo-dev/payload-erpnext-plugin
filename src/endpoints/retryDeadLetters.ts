@@ -1,5 +1,6 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { getUserOrgId, getUserSiteId, type UserWithRole } from '../types'
+import { getCredentials, authHeaders } from './erpnextProxy'
 
 /**
  * POST /api/retry-dead-letters
@@ -91,27 +92,29 @@ export const retryDeadLettersEndpoint: Endpoint = {
                     }
 
                     // We don't have apiKey/apiSecret stored in dead-letter for security;
-                    // re-resolve from the site's active ERPNextConfig
+                    // re-resolve from the site's active ERPNextConfig via
+                    // getCredentials(), which correctly branches between
+                    // api_key and oauth authMethod (and transparently
+                    // refreshes an expired OAuth token). The previous direct
+                    // `cfg.apiKey`/`cfg.apiSecret` read here had no guard at
+                    // all for an OAuth-connected site (both undefined),
+                    // building `Authorization: token undefined:undefined`
+                    // and failing every retry forever for that site.
                     const siteId = dl.site as string | number
-                    const configs = await req.payload.find({
-                        collection: 'erpnext-config' as unknown as CollectionSlug,
-                        where: {
-                            site: { equals: siteId },
-                            isActive: { equals: true },
-                        },
-                        limit: 1,
+                    const siteDoc = await req.payload.findByID({
+                        collection: 'sites' as unknown as CollectionSlug,
+                        id: siteId,
                         depth: 0,
-                        req,
                         overrideAccess: true,
-                        context: { preventMasking: true },
-                    })
+                    }).catch(() => null)
+                    const siteSlug = (siteDoc as unknown as { slug?: string } | null)?.slug
+                    const creds = siteSlug ? await getCredentials(req.payload, siteSlug) : null
 
-                    if (configs.totalDocs === 0) {
-                        results.push({ id, status: 'skipped', detail: 'No active ERPNext config found for site' })
+                    if (!creds) {
+                        results.push({ id, status: 'skipped', detail: 'No active ERPNext config, or credentials are missing, for site' })
                         continue
                     }
 
-                    const cfg = configs.docs[0] as unknown as Record<string, string>
                     const url = `${erpnextUrl.replace(/\/+$/, '')}/api/resource/${encodeURIComponent(docType)}`
 
                     const controller = new AbortController()
@@ -119,10 +122,7 @@ export const retryDeadLettersEndpoint: Endpoint = {
 
                     const response = await fetch(url, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `token ${cfg.apiKey}:${cfg.apiSecret}`,
-                        },
+                        headers: authHeaders(creds),
                         body: JSON.stringify(payload),
                         signal: controller.signal,
                     })

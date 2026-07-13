@@ -1,7 +1,8 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
-import { decryptCredential } from '../utils/erpnextCrypto';
 import { getUserSiteId, type UserWithRole, type ERPNextCompany } from '../types';
+import { getCredentials, authHeaders } from './erpnextProxy';
+import type { ERPNextCredentials } from '../types';
 
 /**
  * POST /api/erpnext-config/fetch-companies
@@ -73,9 +74,7 @@ export const fetchCompaniesEndpoint: Endpoint = {
                 apiSecret?: string
             }
 
-            let erpnextUrl: string
-            let apiKey: string
-            let apiSecret: string
+            let creds: ERPNextCredentials | null
 
             // ── Resolve credentials ────────────────────────────────────
             if (configId) {
@@ -91,10 +90,10 @@ export const fetchCompaniesEndpoint: Endpoint = {
                 const cfg = config as unknown as Record<string, unknown>
 
                 // Enforce tenant scoping for non-super-admins.
+                const cfgSite = cfg.site as string | number | { id?: string | number } | null | undefined
+                const cfgSiteId = cfgSite && typeof cfgSite === 'object' ? cfgSite.id : cfgSite
                 if (!isSuperAdmin) {
                     const userSiteId = getUserSiteId(user)
-                    const cfgSite = cfg.site as string | number | { id?: string | number } | null | undefined
-                    const cfgSiteId = cfgSite && typeof cfgSite === 'object' ? cfgSite.id : cfgSite
                     if (!userSiteId || String(cfgSiteId) !== String(userSiteId)) {
                         return Response.json(
                             { error: 'You can only fetch companies for your assigned site' },
@@ -103,13 +102,22 @@ export const fetchCompaniesEndpoint: Endpoint = {
                     }
                 }
 
-                erpnextUrl = (cfg.erpnextUrl as string) || ''
-                apiKey = (cfg.apiKey as string) || ''
-                apiSecret = (cfg.apiSecret as string) || ''
-
-                // Decrypt if encrypted
-                apiKey = decryptCredential(apiKey)
-                apiSecret = decryptCredential(apiSecret)
+                // getCredentials() correctly branches between api_key and
+                // oauth authMethod (and transparently refreshes an expired
+                // OAuth token) — the previous direct apiKey/apiSecret read
+                // here predated OAuth support and hardcoded the api_key
+                // path, so this endpoint always failed for an OAuth-connected
+                // site's config, marking it "disconnected" even when healthy.
+                const siteDoc = cfgSiteId
+                    ? await req.payload.findByID({
+                        collection: 'sites' as unknown as CollectionSlug,
+                        id: cfgSiteId,
+                        depth: 0,
+                        overrideAccess: true,
+                    }).catch(() => null)
+                    : null
+                const siteSlug = (siteDoc as unknown as { slug?: string } | null)?.slug
+                creds = siteSlug ? await getCredentials(req.payload, siteSlug) : null
             } else if (rawUrl && rawKey && rawSecret) {
                 // Raw credentials are a testing convenience; restrict to super-admins
                 // so a site admin cannot probe arbitrary ERPNext instances.
@@ -119,9 +127,7 @@ export const fetchCompaniesEndpoint: Endpoint = {
                         { status: 403 },
                     )
                 }
-                erpnextUrl = rawUrl
-                apiKey = rawKey
-                apiSecret = rawSecret
+                creds = { url: rawUrl.replace(/\/+$/, ''), apiKey: rawKey, apiSecret: rawSecret, authMethod: 'api_key' }
             } else {
                 return Response.json(
                     { error: 'Provide either configId or (erpnextUrl + apiKey + apiSecret)' },
@@ -129,8 +135,12 @@ export const fetchCompaniesEndpoint: Endpoint = {
                 )
             }
 
+            if (!creds) {
+                return Response.json({ error: 'No active ERPNext config, or credentials are missing, for this site' }, { status: 400 })
+            }
+
             // ── TLS enforcement ────────────────────────────────────────
-            const normalizedUrl = erpnextUrl.replace(/\/+$/, '')
+            const normalizedUrl = creds.url
             if (process.env.NODE_ENV === 'production' && !normalizedUrl.startsWith('https://')) {
                 return Response.json(
                     { error: 'Only HTTPS ERPNext URLs are allowed' },
@@ -143,10 +153,7 @@ export const fetchCompaniesEndpoint: Endpoint = {
 
             const response = await fetch(companiesUrl, {
                 method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `token ${apiKey}:${apiSecret}`,
-                },
+                headers: authHeaders(creds),
                 signal: AbortSignal.timeout(15000),
             })
 

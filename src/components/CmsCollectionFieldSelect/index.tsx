@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { useField, useForm } from '@payloadcms/ui'
+import { useField } from '@payloadcms/ui'
 
 import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput } from '../shared'
 
@@ -12,35 +12,34 @@ interface Option {
 
 /**
  * Field component listing the writable fields of the rule's target collection
- * (from /api/cms-collection-fields). Reads the root-level `targetCollection` from the
- * form so it works both at the top level (upsert_payload_field) and inside the
- * field_mappings array rows (payload_field). Falls back to a plain text input.
+ * (from /api/cms-collection-fields). Reads the root-level `targetCollection`
+ * field reactively (useField, not a mount-only getData() read), so it works
+ * wherever it's used — field_mappings rows, constant_values rows, or the
+ * standalone statusField — and actually re-fetches once a collection is
+ * picked instead of only checking it once on first render.
  */
 export const CmsCollectionFieldSelect: React.FC<{ path: string }> = ({ path }) => {
   const { value, setValue } = useField<string>({ path })
-  const { getData } = useForm()
+  const { value: targetCollection } = useField<string | null>({ path: 'targetCollection' })
   const [options, setOptions] = useState<Option[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const data = getData() as { targetCollection?: string }
-  const targetCollection = data?.targetCollection
+  const [fetchError, setFetchError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!targetCollection) {
       setOptions([])
-      setError('Select a target collection first.')
+      setFetchError(null)
       return
     }
     setLoading(true)
-    setError(null)
+    setFetchError(null)
     fetch(`/api/cms-collection-fields?collection=${encodeURIComponent(targetCollection)}`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json() as Promise<{ fields?: Option[] }>
       })
       .then((json) => setOptions(json.fields ?? []))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load fields'))
+      .catch((err) => setFetchError(err instanceof Error ? err.message : 'Failed to load fields'))
       .finally(() => setLoading(false))
   }, [targetCollection])
 
@@ -51,8 +50,16 @@ export const CmsCollectionFieldSelect: React.FC<{ path: string }> = ({ path }) =
     })),
   [options])
 
-  const showFallback = error && options.length === 0
-  const showEmpty = !loading && options.length === 0 && !error
+  // Nothing to pick yet — a plain info message, no error styling and no
+  // free-typing escape hatch (typing a field name before a collection is
+  // even chosen isn't meaningful, since there's nothing to validate against).
+  if (!targetCollection) {
+    return (
+      <FieldWrapper path={path} label="Payload Field" description="Field on the target Payload collection to map data into.">
+        <EmptyState message="Select a target collection first." />
+      </FieldWrapper>
+    )
+  }
 
   return (
     <FieldWrapper path={path} label="Payload Field" description="Field on the target Payload collection to map data into.">
@@ -66,9 +73,9 @@ export const CmsCollectionFieldSelect: React.FC<{ path: string }> = ({ path }) =
           onChange={(selected) => setValue(selected)}
         />
       )}
-      {showFallback && (
+      {!loading && options.length === 0 && fetchError && (
         <>
-          <ErrorState message={`${error} Type the field name manually.`} />
+          <ErrorState message={`${fetchError}. Type the field name manually.`} />
           <div style={{ marginTop: '0.5rem' }}>
             <StyledTextInput
               path={path}
@@ -79,7 +86,7 @@ export const CmsCollectionFieldSelect: React.FC<{ path: string }> = ({ path }) =
           </div>
         </>
       )}
-      {showEmpty && <EmptyState message="No fields available. Select a target collection first." />}
+      {!loading && options.length === 0 && !fetchError && <EmptyState message="No fields found on this collection." />}
     </FieldWrapper>
   )
 }
