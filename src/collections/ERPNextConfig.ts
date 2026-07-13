@@ -4,7 +4,7 @@ import {
 } from '../access/roles';
 import { organizationField } from '../fields/organizationField';
 import { encryptCredential, decryptCredential } from '../utils/erpnextCrypto';
-import type { ERPNextCompany, ERPNextLeadSource, UserWithRole } from '../types';
+import type { ERPNextCompany, UserWithRole } from '../types';
 
 /**
  * Field-level guard: only admins/super-admins (or trusted server calls using
@@ -56,7 +56,7 @@ function decryptAfterRead({ value, req, context }: { value: unknown; req: any; c
     return decrypted
 }
 
-// ── afterChange: auto-fetch companies + lead sources when creds are saved ──
+// ── afterChange: auto-fetch companies when creds are saved ──
 
 const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
     const erpnextUrl = doc.erpnextUrl as string | undefined
@@ -105,7 +105,6 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
     }
 
     let companies: ERPNextCompany[] = []
-    let leadSources: ERPNextLeadSource[] = []
     let connected = false
 
     try {
@@ -126,20 +125,6 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
             connected = true
         }
 
-        // ── Fetch lead sources ─────────────────────────────────────
-        const leadSourcesRes = await fetch(
-            `${normalizedUrl}/api/resource/Lead%20Source?fields=["name","source_name"]&limit_page_length=100`,
-            { method: 'GET', headers, signal: AbortSignal.timeout(15000) },
-        )
-
-        if (leadSourcesRes.ok) {
-            const result = await leadSourcesRes.json() as { data?: ERPNextLeadSource[] }
-            leadSources = (result.data ?? []).map((ls) => ({
-                name: ls.name,
-                source_name: ls.source_name,
-            }))
-        }
-
         // ── Persist fetched data on the document ───────────────────
         const now = new Date().toISOString()
         await req.payload.update({
@@ -148,8 +133,6 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
             data: {
                 availableCompanies: companies,
                 lastCompanyFetchAt: now,
-                availableLeadSources: leadSources,
-                lastLeadSourceFetchAt: now,
                 connectionStatus: connected ? 'connected' : 'disconnected',
             } as any,
             overrideAccess: true,
@@ -158,7 +141,7 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
         })
 
         req.payload.logger.info(
-            `[ERPNextConfig] Auto-fetched ${companies.length} companies and ${leadSources.length} lead sources from ${normalizedUrl}`,
+            `[ERPNextConfig] Auto-fetched ${companies.length} companies from ${normalizedUrl}`,
         )
     } catch (err) {
         req.payload.logger.warn(`[ERPNextConfig] Auto-fetch failed: ${err}`)
@@ -185,9 +168,9 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
  *
  * UX Flow:
  *   1. Tab "Connection" → enter URL + API Key + API Secret → Save
- *   2. afterChange hook auto-fetches companies & lead sources from ERPNext
- *   3. Tab "ERPNext Settings" → select company & lead source from dropdowns → Save
- *   4. All form submissions auto-inject company + source fields into ERPNext docs
+ *   2. afterChange hook auto-fetches companies from ERPNext
+ *   3. Tab "ERPNext Settings" → select the company this site interacts with → Save
+ *   4. Form submissions optionally auto-inject the selected company into ERPNext docs
  */
 export const ERPNextConfig: CollectionConfig = {
     slug: 'erpnext-config',
@@ -265,7 +248,7 @@ export const ERPNextConfig: CollectionConfig = {
                 // ── Tab 1: Connection ────────────────────────────────
                 {
                     label: '🔑 Connection',
-                    description: 'Enter your ERPNext API credentials and save. Companies and Lead Sources will be fetched automatically.',
+                    description: 'Enter your ERPNext API credentials and save. Companies will be fetched automatically for tenant selection.',
                     fields: [
                         {
                             name: 'erpnextUrl',
@@ -276,7 +259,7 @@ export const ERPNextConfig: CollectionConfig = {
                                 update: adminOrAboveField,
                             },
                             admin: {
-                                description: 'ERPNext instance URL (e.g. https://erp.ivarse.com)',
+                                description: 'ERPNext instance URL (e.g. https://erp.example.com)',
                             },
                         },
                         {
@@ -285,13 +268,19 @@ export const ERPNextConfig: CollectionConfig = {
                                 {
                                     name: 'apiKey',
                                     type: 'text',
-                                    required: true,
+                                    // Not required when authMethod is 'oauth' — the OAuth Connect flow
+                                    // below populates oauthAccessToken instead. Static `required: true`
+                                    // would block saving an OAuth-only config.
+                                    validate: (value: unknown, { siblingData }: { siblingData?: Record<string, unknown> }) => {
+                                        if (siblingData?.authMethod === 'oauth') return true
+                                        return value ? true : 'API Key is required when using manual authentication.'
+                                    },
                                     access: {
                                         create: adminOrAboveField,
                                         update: adminOrAboveField,
                                     },
                                     admin: {
-                                        description: 'ERPNext API Key (from User → API Access)',
+                                        description: 'ERPNext API Key (from User → API Access) — only needed for manual authentication, see Connect via OAuth below.',
                                         width: '50%',
                                     },
                                     hooks: {
@@ -308,13 +297,16 @@ export const ERPNextConfig: CollectionConfig = {
                                 {
                                     name: 'apiSecret',
                                     type: 'text',
-                                    required: true,
+                                    validate: (value: unknown, { siblingData }: { siblingData?: Record<string, unknown> }) => {
+                                        if (siblingData?.authMethod === 'oauth') return true
+                                        return value ? true : 'API Secret is required when using manual authentication.'
+                                    },
                                     access: {
                                         create: adminOrAboveField,
                                         update: adminOrAboveField,
                                     },
                                     admin: {
-                                        description: 'ERPNext API Secret',
+                                        description: 'ERPNext API Secret — only needed for manual authentication, see Connect via OAuth below.',
                                         width: '50%',
                                     },
                                     hooks: {
@@ -329,6 +321,95 @@ export const ERPNextConfig: CollectionConfig = {
                                     },
                                 },
                             ],
+                        },
+                        {
+                            name: 'authMethod',
+                            type: 'select',
+                            defaultValue: 'api_key',
+                            options: [
+                                { label: 'Manual (API Key/Secret above)', value: 'api_key' },
+                                { label: 'Connected via OAuth2', value: 'oauth' },
+                            ],
+                            admin: {
+                                description: 'Set automatically by the Connect via OAuth flow below — informational only, does not change how credentials are used.',
+                                readOnly: true,
+                            },
+                        },
+                        {
+                            type: 'row',
+                            fields: [
+                                {
+                                    name: 'oauthClientId',
+                                    type: 'text',
+                                    admin: {
+                                        description: 'OAuth Client ID — create one in ERPNext under Settings → OAuth Client, with this field\'s Redirect URI set to {your CMS URL}/api/erpnext-oauth/callback.',
+                                        width: '50%',
+                                    },
+                                },
+                                {
+                                    name: 'oauthClientSecret',
+                                    type: 'text',
+                                    access: { create: adminOrAboveField, update: adminOrAboveField },
+                                    admin: { description: 'OAuth Client Secret', width: '50%' },
+                                    hooks: {
+                                        beforeChange: [
+                                            async ({ value, previousDoc, req }) =>
+                                                await encryptBeforeChange({ value, previousDoc, field: { name: 'oauthClientSecret' }, req }),
+                                        ],
+                                        afterRead: [
+                                            ({ value, req, context }) =>
+                                                decryptAfterRead({ value, req, context: context as Record<string, unknown> }),
+                                        ],
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            name: 'erpnextConnectPanel',
+                            type: 'ui',
+                            admin: {
+                                components: {
+                                    Field: {
+                                        path: 'payload-erpnext-plugin/components/ERPNextConnectPanel',
+                                        exportName: 'ERPNextConnectPanelField',
+                                    },
+                                },
+                            },
+                        },
+                        {
+                            name: 'oauthAccessToken',
+                            type: 'text',
+                            admin: { hidden: true, description: 'Internal — OAuth2 access token, set by Connect via OAuth.' },
+                            hooks: {
+                                beforeChange: [
+                                    async ({ value, previousDoc, req }) =>
+                                        await encryptBeforeChange({ value, previousDoc, field: { name: 'oauthAccessToken' }, req }),
+                                ],
+                                afterRead: [
+                                    ({ value, req, context }) =>
+                                        decryptAfterRead({ value, req, context: context as Record<string, unknown> }),
+                                ],
+                            },
+                        },
+                        {
+                            name: 'oauthRefreshToken',
+                            type: 'text',
+                            admin: { hidden: true, description: 'Internal — OAuth2 refresh token, used to silently renew an expired access token.' },
+                            hooks: {
+                                beforeChange: [
+                                    async ({ value, previousDoc, req }) =>
+                                        await encryptBeforeChange({ value, previousDoc, field: { name: 'oauthRefreshToken' }, req }),
+                                ],
+                                afterRead: [
+                                    ({ value, req, context }) =>
+                                        decryptAfterRead({ value, req, context: context as Record<string, unknown> }),
+                                ],
+                            },
+                        },
+                        {
+                            name: 'oauthExpiresAt',
+                            type: 'text',
+                            admin: { hidden: true, description: 'Internal — ISO timestamp the current OAuth access token expires at.' },
                         },
                         // Connection status (read-only feedback)
                         {
@@ -351,14 +432,14 @@ export const ERPNextConfig: CollectionConfig = {
                 // ── Tab 2: ERPNext Settings ──────────────────────────
                 {
                     label: '🏢 ERPNext Settings',
-                    description: 'Select the company and lead source for this site. These lists are auto-populated from ERPNext after saving credentials.',
+                    description: 'Select the ERPNext company this site interacts with. The company list is auto-populated after saving credentials.',
                     fields: [
                         // Company dropdown — custom component fetches data from API
                         {
                             name: 'erpnextCompany',
                             type: 'text',
                             admin: {
-                                description: 'Auto-injected into submissions for company-aware doctypes.',
+                                description: 'Company selected for this site.',
                                 components: {
                                     Field: {
                                         path: 'payload-erpnext-plugin/components/CompanySelect',
@@ -367,83 +448,45 @@ export const ERPNextConfig: CollectionConfig = {
                                 },
                             },
                         },
-                        // Lead source dropdown — custom component fetches data from API
                         {
-                            name: 'leadSource',
-                            type: 'text',
+                            name: 'autoInjectCompany',
+                            type: 'checkbox',
+                            defaultValue: true,
                             admin: {
-                                description: 'Auto-injected into Lead submissions as the "source" field.',
-                                components: {
-                                    Field: {
-                                        path: 'payload-erpnext-plugin/components/LeadSourceSelect',
-                                        exportName: 'LeadSourceSelectField',
-                                    },
-                                },
+                                description: 'Automatically inject the selected company into company-aware ERPNext submissions from this site.',
                             },
                         },
                         // Hidden data stores — not shown in UI, used by API only
                         { name: 'availableCompanies', type: 'json', admin: { hidden: true } },
                         { name: 'lastCompanyFetchAt', type: 'date', admin: { hidden: true } },
-                        { name: 'availableLeadSources', type: 'json', admin: { hidden: true } },
-                        { name: 'lastLeadSourceFetchAt', type: 'date', admin: { hidden: true } },
                     ],
                 },
 
-                // ── Tab 3: DocType Mapping ───────────────────────────
-                {
-                    label: '🗂 Mapping',
-                    description: 'Configure how Payload form submissions map to ERPNext document types.',
-                    fields: [
-                        {
-                            name: 'defaultDocType',
-                            type: 'text',
-                            defaultValue: 'Lead',
-                            admin: {
-                                description: 'Default ERPNext DocType to create from form submissions. Fetched live from the connected ERPNext site.',
-                                components: {
-                                    Field: {
-                                        path: 'payload-erpnext-plugin/components/ERPNextDocTypeSelect',
-                                        exportName: 'ERPNextDocTypeSelect',
-                                    },
-                                },
-                            },
-                        },
-                        {
-                            name: 'customDocType',
-                            type: 'text',
-                            admin: {
-                                description: 'Custom DocType name (use when the desired DocType is not in the fetched list)',
-                                condition: (_data, siblingData) => !siblingData?.defaultDocType,
-                            },
-                        },
-                        {
-                            name: 'fieldMappings',
-                            type: 'array',
-                            admin: {
-                                description: 'Map Payload form field names → ERPNext field names. Leave empty to send raw submission data.',
-                            },
-                            fields: [
-                                {
-                                    name: 'formFieldName',
-                                    type: 'text',
-                                    required: true,
-                                    admin: { description: 'Payload form field name (e.g. "email", "name", "message")' },
-                                },
-                                {
-                                    name: 'erpnextFieldName',
-                                    type: 'text',
-                                    required: true,
-                                    admin: { description: 'ERPNext field name (e.g. "email_id", "lead_name", "notes")' },
-                                },
-                            ],
-                        },
-                    ],
-                },
-
-                // ── Tab 4: Inbound Webhooks ──────────────────────────
+                // ── Tab 3: Inbound Webhooks ──────────────────────────
+                // (Formerly also had a "🗂 Mapping" tab for defaultDocType/customDocType/
+                // fieldMappings — that entire tab only ever fed forwardToERPNext.ts, the old
+                // outbound form-submission-to-ERPNext flow. That hook no longer exists in the
+                // codebase and isn't wired into payload.config.ts; confirmed zero runtime
+                // references to any of those three fields. Removed rather than left as dead
+                // schema — see the matching migration dropping the orphaned columns.
+                //
+                // This tab also used to carry webhookDocType/webhookTargetCollection/
+                // webhookTargetKeyField/webhookStatusField/webhookNotifyField/
+                // webhookCustomerGroupField/webhookCompletedCustomerGroup/erpnextStatusMappings,
+                // backing the now-deleted erpnextWebhook.ts endpoint. That design could only
+                // express ONE DocType->collection mapping per site (single active config,
+                // limit:1, no doctype check against the incoming payload) — a real site needs
+                // several DocTypes syncing at once, which ERPNextSyncRules already supported
+                // correctly (one row per DocType, all active rules applied). Confirmed unused
+                // platform-wide (no seed path ever set these fields; the endpoint failed
+                // closed 403 for every site) and its notification template/delay fields were
+                // dead code even when "configured" (delayMinutes only stamped an unread
+                // timestamp; template was captured but never dispatched). Status mapping and
+                // customer-group promotion — the genuinely useful parts — now live as optional
+                // per-rule fields on ERPNextSyncRules instead.
                 {
                     label: '🔔 Webhooks',
-                    description: 'Configure inbound webhooks from ERPNext to Payload. What actually gets synced is defined in the ERPNext Sync Rules collection — one rule per DocType.',
+                    description: 'Shared secret for inbound ERPNext webhooks. What gets synced (DocType, target collection, field mappings, status mapping, customer-group promotion) is defined entirely in the ERPNext Sync Rules collection — one or more rules per site, one per DocType.',
                     fields: [
                         {
                             name: 'webhookSecret',
@@ -461,121 +504,6 @@ export const ERPNextConfig: CollectionConfig = {
                                         decryptAfterRead({ value, req, context: context as Record<string, unknown> }),
                                 ],
                             },
-                        },
-                        {
-                            type: 'row',
-                            fields: [
-                                {
-                                    name: 'webhookDocType',
-                                    type: 'text',
-                                    defaultValue: 'Sales Order',
-                                    admin: {
-                                        width: '50%',
-                                        description: 'ERPNext DocType that triggers this webhook (e.g. Sales Order, Delivery Note, Job Card).',
-                                    },
-                                },
-                                {
-                                    name: 'webhookTargetCollection',
-                                    type: 'text',
-                                    defaultValue: 'orders',
-                                    admin: {
-                                        width: '50%',
-                                        description: 'Payload collection to update when the webhook fires (e.g. orders, jobs).',
-                                    },
-                                },
-                            ],
-                        },
-                        {
-                            type: 'row',
-                            fields: [
-                                {
-                                    name: 'webhookTargetKeyField',
-                                    type: 'text',
-                                    defaultValue: 'erpnext_so_name',
-                                    admin: {
-                                        width: '50%',
-                                        description: 'Payload field that stores the ERPNext document name (used to match the incoming doc).',
-                                    },
-                                },
-                                {
-                                    name: 'webhookStatusField',
-                                    type: 'text',
-                                    defaultValue: 'status',
-                                    admin: {
-                                        width: '50%',
-                                        description: 'Payload field to update with the mapped status.',
-                                    },
-                                },
-                            ],
-                        },
-                        {
-                            type: 'row',
-                            fields: [
-                                {
-                                    name: 'webhookNotifyField',
-                                    type: 'text',
-                                    defaultValue: 'review_notify_after',
-                                    admin: {
-                                        width: '50%',
-                                        description: 'Optional Payload datetime field to set for delayed notifications (leave blank to disable).',
-                                    },
-                                },
-                                {
-                                    name: 'webhookCustomerGroupField',
-                                    type: 'text',
-                                    defaultValue: 'custom_phone',
-                                    admin: {
-                                        width: '50%',
-                                        description: 'Optional ERPNext field used to look up the customer for group promotion (leave blank to disable promotion).',
-                                    },
-                                },
-                            ],
-                        },
-                        {
-                            name: 'webhookCompletedCustomerGroup',
-                            type: 'text',
-                            defaultValue: 'TOG Completed',
-                            admin: {
-                                description: 'ERPNext Customer Group to promote customers into when the mapped "Confirmed"-like status fires. Only used when webhookCustomerGroupField is set.',
-                            },
-                        },
-                        {
-                            name: 'erpnextStatusMappings',
-                            type: 'array',
-                            label: 'ERPNext Status Mappings',
-                            admin: {
-                                description: 'Maps inbound ERPNext statuses to Payload statuses, notification templates, and optional delays. Required for POST /api/webhooks/erpnext?site=<site-slug>; no built-in defaults are provided.',
-                            },
-                            fields: [
-                                {
-                                    type: 'row',
-                                    fields: [
-                                        {
-                                            name: 'erpStatus',
-                                            type: 'text',
-                                            required: true,
-                                            admin: { width: '25%', description: 'ERPNext status, e.g. Confirmed' },
-                                        },
-                                        {
-                                            name: 'payloadStatus',
-                                            type: 'text',
-                                            required: true,
-                                            admin: { width: '25%', description: 'Payload Orders status, e.g. confirmed' },
-                                        },
-                                        {
-                                            name: 'template',
-                                            type: 'text',
-                                            admin: { width: '35%', description: 'Notification template slug. Leave blank for no notification.' },
-                                        },
-                                        {
-                                            name: 'delayMinutes',
-                                            type: 'number',
-                                            min: 0,
-                                            admin: { width: '15%', description: 'Review delay in minutes.' },
-                                        },
-                                    ],
-                                },
-                            ],
                         },
                     ],
                 },

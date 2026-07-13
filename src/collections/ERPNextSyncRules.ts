@@ -263,6 +263,63 @@ export const ERPNextSyncRules: CollectionConfig = {
             ],
         },
         {
+            name: 'statusField',
+            type: 'text',
+            admin: {
+                description: 'Payload field on the target collection to write the mapped status to (e.g. erp_sync_status). Leave blank to disable status sync for this rule.',
+                components: {
+                    Field: {
+                        path: 'payload-erpnext-plugin/components/CmsCollectionFieldSelect',
+                        exportName: 'CmsCollectionFieldSelect',
+                    },
+                },
+            },
+        },
+        {
+            name: 'customerGroupField',
+            type: 'text',
+            admin: {
+                description: 'Optional ERPNext field used to look up the customer for group promotion (leave blank to disable promotion for every status mapping below).',
+            },
+        },
+        {
+            name: 'statusMappings',
+            type: 'array',
+            labels: { singular: 'Status Mapping', plural: 'Status Mappings' },
+            admin: {
+                description: 'ERPNext status value → Payload status value. Applied on every sync (webhook and backfill) when the ERP record\'s "status" field matches one of these. Different statuses can promote to different (or no) customer group — it is not one fixed group for the whole rule.',
+                condition: (_data, siblingData) => Boolean(siblingData?.statusField),
+            },
+            fields: [
+                {
+                    type: 'row',
+                    fields: [
+                        {
+                            name: 'erpStatus',
+                            type: 'text',
+                            required: true,
+                            admin: { width: '34%', description: 'ERPNext status value (e.g. Completed).' },
+                        },
+                        {
+                            name: 'payloadStatus',
+                            type: 'text',
+                            required: true,
+                            admin: { width: '33%', description: 'Payload status value to write (e.g. synced).' },
+                        },
+                        {
+                            name: 'customerGroup',
+                            type: 'text',
+                            admin: {
+                                width: '33%',
+                                description: 'Optional — promote the customer to this ERPNext group when this status is reached. Leave blank for no promotion on this status.',
+                                condition: (data) => Boolean((data as Record<string, unknown>)?.customerGroupField),
+                            },
+                        },
+                    ],
+                },
+            ],
+        },
+        {
             type: 'row',
             fields: [
                 {

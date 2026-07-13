@@ -1,7 +1,9 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useField, useForm } from '@payloadcms/ui'
+
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput } from '../shared'
 
 interface Option {
   value: string
@@ -42,45 +44,44 @@ export const CmsCollectionFieldSelect: React.FC<{ path: string }> = ({ path }) =
       .finally(() => setLoading(false))
   }, [targetCollection])
 
-  return (
-    <div style={{ marginBottom: '1rem' }}>
-      <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>
-        Payload Field
-      </label>
-      {error && !options.length ? (
-        <input
-          type="text"
-          value={value || ''}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="payload field name"
-          style={inputStyle}
-        />
-      ) : (
-        <select
-          value={value || ''}
-          onChange={(e) => setValue(e.target.value)}
-          disabled={loading || options.length === 0}
-          style={inputStyle}
-        >
-          <option value="">{loading ? 'Loading fields…' : 'Select a Field'}</option>
-          {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      )}
-    </div>
-  )
-}
+  const selectOptions = useMemo(() =>
+    options.map((opt) => ({
+      label: opt.label,
+      value: opt.value,
+    })),
+  [options])
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.5rem',
-  borderRadius: '0.25rem',
-  border: '1px solid var(--theme-elevation-150, #d1d5db)',
-  background: 'var(--theme-input-bg, #fff)',
-  color: 'var(--theme-text, #111)',
+  const showFallback = error && options.length === 0
+  const showEmpty = !loading && options.length === 0 && !error
+
+  return (
+    <FieldWrapper path={path} label="Payload Field" description="Field on the target Payload collection to map data into.">
+      {loading && <LoadingState message="Loading fields…" />}
+      {!loading && options.length > 0 && (
+        <StyledSelect
+          path={path}
+          value={value || ''}
+          options={selectOptions}
+          placeholder="Select a Field"
+          onChange={(selected) => setValue(selected)}
+        />
+      )}
+      {showFallback && (
+        <>
+          <ErrorState message={`${error} Type the field name manually.`} />
+          <div style={{ marginTop: '0.5rem' }}>
+            <StyledTextInput
+              path={path}
+              value={value || ''}
+              onChange={(val) => setValue(val)}
+              placeholder="payload field name"
+            />
+          </div>
+        </>
+      )}
+      {showEmpty && <EmptyState message="No fields available. Select a target collection first." />}
+    </FieldWrapper>
+  )
 }
 
 export default CmsCollectionFieldSelect

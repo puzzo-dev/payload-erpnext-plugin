@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { useField, useDocumentInfo, FieldLabel, SelectInput } from '@payloadcms/ui'
+import { useField, useDocumentInfo } from '@payloadcms/ui'
 
 import type { ERPNextCompanyOption } from '../../types'
+import { FieldWrapper, LoadingState, EmptyState, StyledSelect } from '../shared'
 
 /**
  * Custom Field component for `erpnextCompany`.
@@ -35,55 +36,37 @@ export const CompanySelectField: React.FC<{ path: string; field: { name: string;
             .finally(() => setLoading(false))
     }, [id])
 
-    const options = useMemo(() => [
-        { label: '— Select a company —', value: '' },
-        ...companies.map((c) => ({
+    const options = useMemo(() =>
+        companies.map((c) => ({
             label: `${c.company_name}${c.country ? ` (${c.country})` : ''}`,
             value: c.name,
         })),
-    ], [companies])
+    [companies])
 
     const hasCompanies = companies.length > 0
 
     return (
-        <div style={{ marginBottom: '1.5rem' }}>
-            <FieldLabel label={field.label || 'ERPNext Company'} path={path} />
+        <FieldWrapper path={path} label={field.label || 'ERPNext Company'} description={field.admin?.description}>
             {loading ? (
-                <div style={{
-                    padding: '12px 16px',
-                    borderRadius: '4px',
-                    border: '1px solid var(--theme-elevation-150)',
-                    backgroundColor: 'var(--theme-elevation-50)',
-                    color: 'var(--theme-elevation-500)',
-                    fontSize: '13px',
-                }}>
-                    ⏳ Loading companies...
-                </div>
+                <LoadingState message="Loading companies…" />
             ) : hasCompanies ? (
-                <SelectInput
+                <StyledSelect
                     path={path}
-                    name={path}
                     value={value || ''}
-                    onChange={(option: any) => {
-                        const selected = Array.isArray(option) ? option[0] : option
-                        setValue(selected?.value != null ? String(selected.value) : '')
-                    }}
                     options={options}
+                    placeholder="Select a company"
+                    onChange={(selected) => setValue(selected)}
                 />
             ) : (
-                <div style={{
-                    padding: '12px 16px',
-                    borderRadius: '4px',
-                    border: '1px solid var(--theme-elevation-150)',
-                    backgroundColor: 'var(--theme-elevation-50)',
-                    color: 'var(--theme-elevation-500)',
-                    fontSize: '13px',
-                }}>
-                    {id
-                        ? '⏳ No companies loaded yet. Save your API credentials, then refresh this page.'
-                        : '💡 Save the document first, then companies will be fetched automatically.'}
-                </div>
+                <EmptyState
+                    message={
+                        id
+                            ? 'No companies loaded yet. Save your API credentials, then refresh this page.'
+                            : 'Save the document first, then companies will be fetched automatically.'
+                    }
+                />
             )}
-        </div>
+        </FieldWrapper>
     )
 }
+

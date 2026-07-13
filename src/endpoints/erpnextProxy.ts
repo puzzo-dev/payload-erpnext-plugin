@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import type { ERPNextCredentials } from '../types';
 import { decryptCredential } from '../utils/erpnextCrypto';
+import { refreshOAuthToken } from './erpnextOAuth';
 
 /**
  * ERPNext Proxy Endpoints
@@ -32,7 +33,7 @@ const ALLOWED_SUBMIT_DOCTYPES = [
 const ALLOWED_READ_DOCTYPES = [
     ...ALLOWED_SUBMIT_DOCTYPES,
     'Blog Category', 'Job Opening', 'Ticket Type', 'HD Ticket Type', 'User', 'Newsletter',
-    'Company', 'Lead Source',
+    'Company',
 ]
 
 const PUBLIC_READ_DOCTYPES = [
@@ -71,31 +72,36 @@ export async function getCredentials(
 
     const isMasked = (v: string) => v.includes('\u2022')
 
+    const validateUrl = (url: string): boolean => {
+        try {
+            const parsed = new URL(url)
+            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+            if (parsed.protocol === 'http:' && process.env.NODE_ENV === 'production') {
+                payload.logger.error('[ERPNext-Proxy] Refusing to use non-HTTPS ERPNext URL in production')
+                return false
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /**
-     * Build credentials from a config document.
+     * Build API-key credentials from a config document (authMethod: 'api_key', the default).
      * If masking leaked through (Payload bug), we log and fail closed instead of
      * falling back to raw SQL — raw SQL bypasses access control and breaks on schema changes.
      */
-    const buildCreds = (
+    const buildApiKeyCreds = (
         cfg: Record<string, unknown>,
     ): ERPNextCredentials | null => {
         const url = (cfg.erpnextUrl as string)?.replace(/\/+$/, '')
         const rawKey = cfg.apiKey as string
         const rawSecret = cfg.apiSecret as string
         const company = (cfg.erpnextCompany as string) || undefined
-        const leadSource = (cfg.leadSource as string) || undefined
+        const autoInjectCompany = cfg.autoInjectCompany !== false
 
         if (!url || !rawKey || !rawSecret) return null
-        try {
-            const parsed = new URL(url)
-            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
-            if (parsed.protocol === 'http:' && process.env.NODE_ENV === 'production') {
-                payload.logger.error('[ERPNext-Proxy] Refusing to use non-HTTPS ERPNext URL in production')
-                return null
-            }
-        } catch {
-            return null
-        }
+        if (!validateUrl(url)) return null
         if (isMasked(rawKey) || isMasked(rawSecret)) {
             // The user-stripping approach should prevent this, but if masking still
             // leaks through for any reason, fail closed rather than using masked creds.
@@ -110,7 +116,51 @@ export async function getCredentials(
         const apiKey = rawKey.startsWith('enc:') ? decryptCredential(rawKey) : rawKey
         const apiSecret = rawSecret.startsWith('enc:') ? decryptCredential(rawSecret) : rawSecret
         if (!apiKey || !apiSecret || isMasked(apiKey) || isMasked(apiSecret)) return null
-        return { url, apiKey, apiSecret, company, leadSource }
+        return { url, apiKey, apiSecret, authMethod: 'api_key', company, autoInjectCompany }
+    }
+
+    /**
+     * Build OAuth credentials from a config document (authMethod: 'oauth', set by the
+     * ERPNext OAuth2 Connect flow — see endpoints/erpnextOAuth.ts). Transparently
+     * refreshes the access token via the stored refresh token if it has expired,
+     * so callers never need to know the token was stale.
+     */
+    const buildOAuthCreds = async (
+        cfg: Record<string, unknown>,
+    ): Promise<ERPNextCredentials | null> => {
+        const url = (cfg.erpnextUrl as string)?.replace(/\/+$/, '')
+        const company = (cfg.erpnextCompany as string) || undefined
+        const autoInjectCompany = cfg.autoInjectCompany !== false
+        if (!url || !validateUrl(url)) return null
+
+        const rawToken = cfg.oauthAccessToken as string | undefined
+        const expiresAt = cfg.oauthExpiresAt as string | undefined
+        if (!rawToken) return null
+        if (isMasked(rawToken)) {
+            payload.logger.error(`[ERPNext-Proxy] OAuth token masking leaked through for config ${cfg.id}. Failing closed.`)
+            return null
+        }
+        let accessToken = rawToken.startsWith('enc:') ? decryptCredential(rawToken) : rawToken
+
+        const isExpired = expiresAt ? new Date(expiresAt).getTime() <= Date.now() : false
+        if (isExpired) {
+            const rawRefreshToken = cfg.oauthRefreshToken as string | undefined
+            const rawClientId = cfg.oauthClientId as string | undefined
+            const rawClientSecret = cfg.oauthClientSecret as string | undefined
+            const clientSecret = rawClientSecret?.startsWith('enc:') ? decryptCredential(rawClientSecret) : rawClientSecret
+            const refreshToken = rawRefreshToken?.startsWith('enc:') ? decryptCredential(rawRefreshToken) : rawRefreshToken
+
+            if (!refreshToken || !rawClientId || !clientSecret) {
+                payload.logger.warn(`[ERPNext-Proxy] OAuth token expired for config ${cfg.id} and no refresh token/client credentials available`)
+                return null
+            }
+            const refreshed = await refreshOAuthToken(payload, cfg.id as string | number, url, rawClientId, clientSecret, refreshToken)
+            if (!refreshed) return null
+            accessToken = refreshed.accessToken
+        }
+
+        if (!accessToken || isMasked(accessToken)) return null
+        return { url, oauthAccessToken: accessToken, authMethod: 'oauth', company, autoInjectCompany }
     }
 
     // Try collection-based config first.
@@ -134,7 +184,9 @@ export async function getCredentials(
 
             if (configs.totalDocs > 0) {
                 const cfg = configs.docs[0] as unknown as Record<string, unknown>
-                const creds = buildCreds(cfg)
+                const creds = cfg.authMethod === 'oauth'
+                    ? await buildOAuthCreds(cfg)
+                    : buildApiKeyCreds(cfg)
                 if (creds) return creds
             }
         }
@@ -146,7 +198,9 @@ export async function getCredentials(
 export function authHeaders(creds: ERPNextCredentials) {
     return {
         'Content-Type': 'application/json',
-        Authorization: `token ${creds.apiKey}:${creds.apiSecret}`,
+        Authorization: creds.authMethod === 'oauth'
+            ? `Bearer ${creds.oauthAccessToken}`
+            : `token ${creds.apiKey}:${creds.apiSecret}`,
     }
 }
 
@@ -421,14 +475,9 @@ export const erpnextProxySubmit: Endpoint = {
             // Narrow type after validation
             const submitData = { ...(data as Record<string, unknown>) }
 
-            // Auto-inject company for company-aware doctypes (FORCE override)
-            if (creds.company && COMPANY_AWARE_DOCTYPES.has(doctype)) {
+            // Auto-inject company for company-aware doctypes when enabled on the site.
+            if (creds.autoInjectCompany && creds.company && COMPANY_AWARE_DOCTYPES.has(doctype)) {
                 submitData.company = creds.company
-            }
-
-            // Auto-inject lead source for Lead doctype
-            if (creds.leadSource && doctype === 'Lead' && !submitData.source) {
-                submitData.source = creds.leadSource
             }
 
             const encodedDoctype = encodeURIComponent(doctype)
@@ -642,7 +691,7 @@ export const erpnextProxyUpload: Endpoint = {
             const response = await fetch(`${creds.url}/api/method/upload_file`, {
                 method: 'POST',
                 headers: {
-                    Authorization: `token ${creds.apiKey}:${creds.apiSecret}`,
+                    Authorization: authHeaders(creds).Authorization,
                 },
                 body: erpFormData,
             });

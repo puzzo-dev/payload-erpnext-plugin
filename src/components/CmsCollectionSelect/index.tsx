@@ -1,7 +1,9 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useField } from '@payloadcms/ui'
+
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput } from '../shared'
 
 interface Option {
   value: string
@@ -32,45 +34,44 @@ export const CmsCollectionSelect: React.FC<{ path: string }> = ({ path }) => {
       .finally(() => setLoading(false))
   }, [])
 
-  return (
-    <div style={{ marginBottom: '1rem' }}>
-      <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>
-        Target Collection
-      </label>
-      {error && !options.length ? (
-        <input
-          type="text"
-          value={value || ''}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="collection slug (e.g. catalogue-items)"
-          style={inputStyle}
-        />
-      ) : (
-        <select
-          value={value || ''}
-          onChange={(e) => setValue(e.target.value)}
-          disabled={loading || options.length === 0}
-          style={inputStyle}
-        >
-          <option value="">{loading ? 'Loading collections…' : 'Select a Collection'}</option>
-          {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label} ({opt.value})
-            </option>
-          ))}
-        </select>
-      )}
-    </div>
-  )
-}
+  const selectOptions = useMemo(() =>
+    options.map((opt) => ({
+      label: `${opt.label} (${opt.value})`,
+      value: opt.value,
+    })),
+  [options])
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.5rem',
-  borderRadius: '0.25rem',
-  border: '1px solid var(--theme-elevation-150, #d1d5db)',
-  background: 'var(--theme-input-bg, #fff)',
-  color: 'var(--theme-text, #111)',
+  const showFallback = error && options.length === 0
+  const showEmpty = !loading && options.length === 0 && !error
+
+  return (
+    <FieldWrapper path={path} label="Target Collection" description="Payload collection that incoming ERPNext data will sync into.">
+      {loading && <LoadingState message="Loading collections…" />}
+      {!loading && options.length > 0 && (
+        <StyledSelect
+          path={path}
+          value={value || ''}
+          options={selectOptions}
+          placeholder="Select a Collection"
+          onChange={(selected) => setValue(selected)}
+        />
+      )}
+      {showFallback && (
+        <>
+          <ErrorState message={`${error} Type the collection slug manually.`} />
+          <div style={{ marginTop: '0.5rem' }}>
+            <StyledTextInput
+              path={path}
+              value={value || ''}
+              onChange={(val) => setValue(val)}
+              placeholder="e.g. catalogue-items"
+            />
+          </div>
+        </>
+      )}
+      {showEmpty && <EmptyState message="No collections available." />}
+    </FieldWrapper>
+  )
 }
 
 export default CmsCollectionSelect

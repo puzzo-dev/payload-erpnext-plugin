@@ -2,6 +2,7 @@ import type { Endpoint, CollectionSlug } from 'payload'
 import type { ERPNextWebhookPayload } from '../types'
 import { verifyERPNextWebhookSignature } from '../utils/webhookSignature'
 import { findRulesForDoctype, upsertErpRecord, deleteErpRecord, resolveSiteId } from '../sync/runSyncRule'
+import { getCredentials } from './erpnextProxy'
 
 /**
  * POST /api/erpnext-sync?site=<slug>
@@ -107,12 +108,16 @@ export const syncFromERPNextEndpoint: Endpoint = {
             }
 
             const deleting = isDeleteEvent(event)
+            // Only needed for status-mapped customer group promotion (upsertErpRecord no-ops
+            // on it when a rule doesn't set customerGroupField) — resolved once per request
+            // rather than per rule, it's just a DB lookup, not an ERPNext API call.
+            const creds = deleting ? null : await getCredentials(req.payload, siteSlug, req)
             const results: Array<Record<string, unknown>> = []
             for (const rule of rules) {
                 const ruleSiteId = resolveSiteId(rule.site)
                 const result = deleting
                     ? await deleteErpRecord(req, rule, data as Record<string, unknown>, ruleSiteId, log)
-                    : await upsertErpRecord(req, rule, data as Record<string, unknown>, ruleSiteId, log)
+                    : await upsertErpRecord(req, rule, data as Record<string, unknown>, ruleSiteId, creds ?? undefined, log)
                 results.push({ targetCollection: rule.targetCollection, ...result })
             }
 

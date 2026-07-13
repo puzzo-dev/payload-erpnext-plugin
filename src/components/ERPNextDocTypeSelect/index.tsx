@@ -1,7 +1,9 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useField, useForm } from '@payloadcms/ui'
+
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, type SelectOption } from '../shared'
 
 interface DocTypeOption {
     value: string
@@ -56,37 +58,30 @@ export const ERPNextDocTypeSelect: React.FC<{ path: string }> = ({ path }) => {
             .finally(() => setLoading(false))
     }, [getData])
 
+    const selectOptions = useMemo<SelectOption[]>(() =>
+        options.map((opt) => ({
+            label: `${opt.label}${opt.module ? ` — ${opt.module}` : ''}`,
+            value: opt.value,
+        })),
+    [options])
+
+    const showEmpty = !loading && options.length === 0
+
     return (
-        <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>
-                ERPNext DocType
-            </label>
-            {error && !options.length && (
-                <div style={{ color: 'var(--theme-warning-500, #f59e0b)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-                    {error}
-                </div>
+        <FieldWrapper path={path} label="ERPNext DocType" description="DocType to create or read in ERPNext.">
+            {error && !options.length && <ErrorState message={error} />}
+            {loading && <LoadingState message="Loading DocTypes…" />}
+            {!loading && options.length > 0 && (
+                <StyledSelect
+                    path={path}
+                    value={value || ''}
+                    options={selectOptions}
+                    placeholder="Select a DocType"
+                    onChange={(selected) => setValue(selected)}
+                />
             )}
-            <select
-                value={value || ''}
-                onChange={(e) => setValue(e.target.value)}
-                disabled={loading || options.length === 0}
-                style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    borderRadius: '0.25rem',
-                    border: '1px solid var(--theme-elevation-150, #d1d5db)',
-                    background: 'var(--theme-input-bg, #fff)',
-                    color: 'var(--theme-text, #111)',
-                }}
-            >
-                <option value="">{loading ? 'Loading DocTypes…' : 'Select a DocType'}</option>
-                {options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                        {opt.label} {opt.module ? `— ${opt.module}` : ''}
-                    </option>
-                ))}
-            </select>
-        </div>
+            {showEmpty && !error && <EmptyState message="No DocTypes available. Select a site first." />}
+        </FieldWrapper>
     )
 }
 

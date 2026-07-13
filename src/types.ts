@@ -59,17 +59,16 @@ export interface ERPNextCompany {
     default_currency?: string
 }
 
-export interface ERPNextLeadSource {
-    name: string
-    source_name?: string
-}
-
 export interface ERPNextCredentials {
     url: string
-    apiKey: string
-    apiSecret: string
+    /** Present when authMethod is 'api_key' (the default) or unset. */
+    apiKey?: string
+    apiSecret?: string
+    /** Present when authMethod is 'oauth' — already refreshed if it had expired. */
+    oauthAccessToken?: string
+    authMethod?: 'api_key' | 'oauth'
     company?: string
-    leadSource?: string
+    autoInjectCompany?: boolean
 }
 
 export interface ERPNextConfigDoc {
@@ -77,16 +76,16 @@ export interface ERPNextConfigDoc {
     erpnextUrl: string
     apiKey: string
     apiSecret: string
+    authMethod?: 'api_key' | 'oauth'
+    oauthClientId?: string
+    oauthClientSecret?: string
+    oauthAccessToken?: string
+    oauthRefreshToken?: string
+    oauthExpiresAt?: string
     erpnextCompany: string
     availableCompanies?: ERPNextCompany[]
     lastCompanyFetchAt?: string
-    leadSource?: string
-    availableLeadSources?: ERPNextLeadSource[]
-    lastLeadSourceFetchAt?: string
     connectionStatus?: 'connected' | 'disconnected' | 'untested'
-    defaultDocType: 'Lead' | 'Contact' | 'Customer' | 'Web Form Submission' | 'Custom'
-    customDocType?: string
-    fieldMappings?: Array<{ formFieldName: string; erpnextFieldName: string }>
     isActive: boolean
     project: string | number | { id: string | number }
     organization: string | number | { id: string | number }
@@ -140,17 +139,12 @@ export interface ERPNextWebhookPayload {
 /** Structured logger signature used by ERPNext sync endpoints. */
 export type LogFn = (level: 'info' | 'warn' | 'error', msg: string, meta?: Record<string, unknown>) => void
 
-/** Option shapes for the ERPNext admin select components (Company / Lead Source). */
+/** Option shapes for the ERPNext admin select components. */
 export interface ERPNextCompanyOption {
     name: string
     company_name: string
     country?: string
     default_currency?: string
-}
-
-export interface ERPNextLeadSourceOption {
-    name: string
-    source_name: string
 }
 
 /**

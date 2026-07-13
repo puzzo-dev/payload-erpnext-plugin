@@ -1,7 +1,9 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useField, useForm } from '@payloadcms/ui'
+
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, type SelectOption } from '../shared'
 
 interface Option {
   value: string
@@ -43,7 +45,7 @@ export const ERPNextTargetFieldSelect: React.FC<{ path: string }> = ({ path }) =
 
     setLoading(true)
     setError(null)
-    
+
     fetch(`/api/erpnext-doctype-fields?siteId=${siteId}&doctype=${doctype}`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -58,37 +60,30 @@ export const ERPNextTargetFieldSelect: React.FC<{ path: string }> = ({ path }) =
       .finally(() => setLoading(false))
   }, [getData, path])
 
+  const selectOptions = useMemo<SelectOption[]>(() =>
+    options.map((opt) => ({
+      label: `${opt.label} (${opt.value})`,
+      value: opt.value,
+    })),
+  [options])
+
+  const showEmpty = !loading && options.length === 0
+
   return (
-    <div style={{ marginBottom: '1rem' }}>
-      <label className="field-label" style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>
-        ERPNext Target Field
-      </label>
-      {error && !options.length && (
-        <div style={{ color: 'var(--theme-warning-500, #f59e0b)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-          {error}
-        </div>
+    <FieldWrapper path={path} label="ERPNext Target Field" description="Field on the selected DocType to map data into.">
+      {error && !options.length && <ErrorState message={error} />}
+      {loading && <LoadingState message="Loading fields…" />}
+      {!loading && options.length > 0 && (
+        <StyledSelect
+          path={path}
+          value={value || ''}
+          options={selectOptions}
+          placeholder="Select a Field"
+          onChange={(selected) => setValue(selected)}
+        />
       )}
-      <select
-        value={value || ''}
-        onChange={(e) => setValue(e.target.value)}
-        disabled={loading || options.length === 0}
-        style={{
-          width: '100%',
-          padding: '0.5rem',
-          borderRadius: '0.25rem',
-          border: '1px solid var(--theme-elevation-150, #d1d5db)',
-          background: 'var(--theme-input-bg, #fff)',
-          color: 'var(--theme-text, #111)',
-        }}
-      >
-        <option value="">{loading ? 'Loading fields…' : 'Select a Field'}</option>
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label} ({opt.value})
-          </option>
-        ))}
-      </select>
-    </div>
+      {showEmpty && !error && <EmptyState message="No fields available. Select a DocType first." />}
+    </FieldWrapper>
   )
 }
 

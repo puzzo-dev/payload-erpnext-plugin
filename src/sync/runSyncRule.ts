@@ -2,6 +2,44 @@ import type { CollectionSlug, Payload, PayloadRequest } from 'payload'
 import type { ERPNextCredentials, LogFn } from '../types'
 import { authHeaders } from '../endpoints/erpnextProxy'
 
+/** Timeout for ancillary ERPNext API calls (status-mapped customer group promotion). */
+const CUSTOMER_PROMOTION_TIMEOUT_MS = 15000
+
+/**
+ * Look up an ERPNext Customer by an arbitrary field (e.g. the Sales Order's customer
+ * link value) and promote it to a target customer_group if it isn't already there.
+ * Moved here from the retired erpnextWebhook.ts — both the live webhook and backfill
+ * paths need the identical promotion logic, so it lives alongside upsertErpRecord.
+ */
+async function promoteCustomerToGroup(
+    creds: ERPNextCredentials,
+    lookupValue: string,
+    lookupField: string,
+    customerGroup: string,
+): Promise<boolean> {
+    const qs = new URLSearchParams({
+        filters: JSON.stringify([[lookupField, '=', lookupValue]]),
+        fields: JSON.stringify(['name', 'customer_group']),
+    })
+    const res = await fetch(`${creds.url}/api/resource/Customer?${qs}`, {
+        method: 'GET',
+        headers: authHeaders(creds),
+        signal: AbortSignal.timeout(CUSTOMER_PROMOTION_TIMEOUT_MS),
+    })
+    if (!res.ok) return false
+    const body = (await res.json()) as { data?: Array<{ name: string; customer_group?: string }> }
+    const customer = body.data?.[0]
+    if (!customer) return false
+    if (customer.customer_group === customerGroup) return true
+    const putRes = await fetch(`${creds.url}/api/resource/Customer/${encodeURIComponent(customer.name)}`, {
+        method: 'PUT',
+        headers: authHeaders(creds),
+        body: JSON.stringify({ customer_group: customerGroup }),
+        signal: AbortSignal.timeout(CUSTOMER_PROMOTION_TIMEOUT_MS),
+    })
+    return putRes.ok
+}
+
 /**
  * Data-driven ERPNext → Payload inbound sync.
  *
@@ -25,6 +63,12 @@ export interface ERPNextSyncRule {
     constant_values?: Array<{ payload_field?: string | null; value?: string | null }>
     /** Raw ERPNext REST filter (e.g. [["has_variants","=",0]]) applied to the backfill query. */
     filters?: unknown
+    /** Payload field on targetCollection to write the mapped status to. Unset disables status sync. */
+    statusField?: string | null
+    /** ERPNext status value -> Payload status value, with an optional per-status customer group promotion. */
+    statusMappings?: Array<{ erpStatus?: string | null; payloadStatus?: string | null; customerGroup?: string | null }>
+    /** ERPNext field used to look up the customer for group promotion. Unset disables promotion for every status mapping. */
+    customerGroupField?: string | null
     isActive?: boolean
     backfillOnSave?: boolean
 }
@@ -104,11 +148,60 @@ async function findExisting(
  * Upsert a single ERPNext record into the rule's target collection.
  * Returns the action taken for logging/response.
  */
+/**
+ * If the rule has statusField+statusMappings configured, look up the ERP record's own
+ * "status" field in the mapping and write the matched payloadStatus onto the just-upserted
+ * doc. If that mapping entry also names a customerGroup (and the rule has
+ * customerGroupField set), promote the customer via the ERP-side lookup — reading the
+ * lookup value directly off erpRecord rather than an extra ERPNext fetch, since erpRecord
+ * already IS the source doctype's current data (live webhook payload or fresh backfill
+ * pull). Runs identically for both paths since both call upsertErpRecord.
+ */
+async function applyStatusSync(
+    req: PayloadRequest,
+    rule: ERPNextSyncRule,
+    erpRecord: Record<string, unknown>,
+    docId: string | number,
+    creds: ERPNextCredentials | undefined,
+    log?: LogFn,
+): Promise<void> {
+    if (!rule.statusField || !rule.statusMappings?.length) return
+    const erpStatus = erpRecord.status
+    if (typeof erpStatus !== 'string') return
+    const mapping = rule.statusMappings.find((m) => m.erpStatus === erpStatus)
+    if (!mapping?.payloadStatus) return
+
+    try {
+        await req.payload.update({
+            collection: rule.targetCollection as CollectionSlug,
+            id: docId,
+            data: { [rule.statusField]: mapping.payloadStatus } as never,
+            overrideAccess: true,
+        })
+        log?.('info', `Status synced ${rule.targetCollection}`, { id: docId, erpStatus, payloadStatus: mapping.payloadStatus })
+    } catch (err) {
+        log?.('error', 'Status sync failed', { id: docId, error: String(err) })
+    }
+
+    if (mapping.customerGroup && rule.customerGroupField && creds) {
+        const lookupValue = erpRecord[rule.customerGroupField]
+        if (typeof lookupValue === 'string' && lookupValue) {
+            try {
+                const promoted = await promoteCustomerToGroup(creds, lookupValue, rule.customerGroupField, mapping.customerGroup)
+                log?.('info', `Customer group promotion ${promoted ? 'applied' : 'skipped (no match)'}`, { lookupValue, group: mapping.customerGroup })
+            } catch (err) {
+                log?.('error', 'Customer group promotion failed', { error: String(err) })
+            }
+        }
+    }
+}
+
 export async function upsertErpRecord(
     req: PayloadRequest,
     rule: ERPNextSyncRule,
     erpRecord: Record<string, unknown>,
     siteId: string | number,
+    creds?: ERPNextCredentials,
     log?: LogFn,
 ): Promise<{ action: 'created' | 'updated' | 'skipped'; id?: string | number; key?: unknown }> {
     const keyValue = erpRecord[rule.upsert_erp_field]
@@ -132,6 +225,7 @@ export async function upsertErpRecord(
             overrideAccess: true,
         })
         log?.('info', `Updated ${rule.targetCollection}`, { key: keyValue, id: existing.id })
+        await applyStatusSync(req, rule, erpRecord, existing.id, creds, log)
         return { action: 'updated', id: existing.id, key: keyValue }
     }
 
@@ -150,6 +244,7 @@ export async function upsertErpRecord(
         overrideAccess: true,
     })
     log?.('info', `Created ${rule.targetCollection}`, { key: keyValue, id: created.id })
+    await applyStatusSync(req, rule, erpRecord, created.id, creds, log)
     return { action: 'created', id: created.id, key: keyValue }
 }
 
@@ -242,7 +337,7 @@ export async function backfillSyncRule(
 
     for (const record of records) {
         try {
-            const result = await upsertErpRecord(req, rule, record, siteId, log)
+            const result = await upsertErpRecord(req, rule, record, siteId, creds, log)
             stats[result.action] += 1
         } catch (err) {
             stats.skipped += 1

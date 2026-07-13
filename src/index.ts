@@ -16,7 +16,7 @@ import { fetchCmsCollectionsEndpoint } from './endpoints/fetchCmsCollections'
 import { fetchCmsCollectionFieldsEndpoint } from './endpoints/fetchCmsCollectionFields'
 import { retryDeadLettersEndpoint } from './endpoints/retryDeadLetters'
 import { syncFromERPNextEndpoint } from './endpoints/syncFromERPNext'
-import { erpnextWebhookEndpoint } from './endpoints/erpnextWebhook'
+import { erpnextOAuthStartEndpoint, erpnextOAuthCallbackEndpoint } from './endpoints/erpnextOAuth'
 import { erpGetHandler, erpPostHandler, erpPatchHandler, erpDeleteHandler } from './actions/erpActions'
 import { createConnectionMonitorHook } from './hooks/connectionMonitor'
 import { createLinkErpnextCustomerEndpoint } from './endpoints/linkErpnextCustomer'
@@ -51,7 +51,12 @@ export interface ERPNextPluginOptions {
  * ERPNext Plugin for Payload CMS
  *
  * Provides:
- *  - ERPNext connection configuration (per site)
+ *  - ERPNext connection configuration (per site), with two interchangeable
+ *    authMethods: manual API Key/Secret (default), or "Connect via OAuth"
+ *    against Frappe's built-in OAuth2 provider (Settings → OAuth Client in
+ *    ERPNext) — see endpoints/erpnextOAuth.ts and components/ERPNextConnectPanel.
+ *    Both populate the same credentials consumed by getCredentials()/
+ *    authHeaders() below, so nothing downstream needs to know which was used.
  *  - generic erp-get/erp-post/erp-patch/erp-delete actions for the CMS
  *    automation engine's Workflows collection (trigger_erp blocks)
  *  - Dead-letter queue for failed forwards
@@ -94,7 +99,9 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
             retryDeadLettersEndpoint,
             // Inbound ERPNext/Frappe webhooks — the plugin owns all ERP ingress.
             syncFromERPNextEndpoint,
-            erpnextWebhookEndpoint,
+            // ERPNext OAuth2 Connect flow — alternative to manual API Key/Secret entry.
+            erpnextOAuthStartEndpoint,
+            erpnextOAuthCallbackEndpoint,
         ]
 
         if (enableAnonymousUpload) {
