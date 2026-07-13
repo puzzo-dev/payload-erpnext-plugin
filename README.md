@@ -72,8 +72,8 @@ Go to **Integrations → ERPNext Config**:
 
 - Select the site/tenant.
 - Enter the ERPNext URL (HTTPS only).
-- Either enter API Key and Secret manually, **or** click **Connect via OAuth** — see [ERPNext OAuth2 Connect](#erpnext-oauth2-connect) below. Both populate the same underlying credentials; pick whichever suits a given site.
-- Fetch companies for tenant selection.
+- Either enter API Key and Secret manually, **or** enter the ERPNext username/password of an account with permission to create OAuth Clients and click **Connect** — see [ERPNext OAuth2 Connect](#erpnext-oauth2-connect) below. Both populate the same underlying credentials; pick whichever suits a given site.
+- Companies are fetched automatically once credentials are in place (manual or OAuth) — no separate "fetch companies" step.
 - Mark as Active and Save.
 
 ### 3. Build a Workflow Step
@@ -89,29 +89,28 @@ Go to **Settings → Workflows**:
 
 ## ERPNext OAuth2 Connect
 
-> [!WARNING]
-> Implemented strictly against Frappe's documented OAuth2 provider contract (`frappe.integrations.oauth2.authorize` / `.get_token`). Not yet exercised against a real ERPNext instance — that needs a live OAuth Client registered in a real Frappe site and a browser to complete the consent screen, neither of which exist in the environment this was built in. Do a manual test connect before relying on this in production.
-
-Two ways to authenticate an `ERPNext Config`, fully interchangeable — pick whichever suits a given site. Both populate the credentials `getCredentials()`/`authHeaders()` use, so nothing downstream (the proxy endpoints, workflow ERP actions) needs to know which was used.
+Two ways to authenticate an `ERPNext Config`, fully interchangeable — pick whichever suits a given site. Both populate the credentials `getCredentials()`/`authHeaders()` use, so nothing downstream (the proxy endpoints, workflow ERP actions) needs to know which was used. Tested end-to-end against a real ERPNext instance.
 
 ### Option A — Manual API Key/Secret
 
-The default. Create an API Key/Secret pair in ERPNext under **User → API Access**, paste them in. Fully supported indefinitely — not a legacy fallback.
+Create an API Key/Secret pair in ERPNext under **User → API Access**, paste them in. Fully supported indefinitely — not a legacy fallback.
 
-### Option B — Connect via OAuth
+### Option B — Connect (login-based auto-connect)
 
-Frappe (the framework ERPNext is built on) has a genuine, documented OAuth2 **provider** built in — this plugin only implements the OAuth *client* side.
+There is **no manual OAuth Client setup step** — no going into ERPNext's admin to register a Client ID/Secret or a redirect URI by hand. Enter the ERPNext username/password of an account with permission to create OAuth Clients (typically an Administrator or System Manager) directly on the `erpnext-config` document and click **Connect**:
 
-1. In ERPNext, go to **Settings → OAuth Client** and create one. Set its Redirect URI to `{PAYLOAD_PUBLIC_SERVER_URL}/api/erpnext-oauth/callback`.
-2. On the `erpnext-config` document, enter the ERPNext URL and that Client's **Client ID**/**Client Secret** on the Connection tab, then save.
-3. Click **Connect via OAuth** — you'll be redirected to ERPNext's OAuth2 consent screen, then back to the config's edit page with `authMethod` set to `oauth` and an access + refresh token pair stored (encrypted).
-4. Access tokens are refreshed automatically and transparently by `getCredentials()` when expired, using the stored refresh token — no user interaction needed after the initial connect, and no separate refresh endpoint for callers to think about.
+1. The plugin logs in to ERPNext via `POST /api/method/login` using the entered credentials (this call is never stored — only the resulting session is used, transiently, for the next steps).
+2. It looks up an existing OAuth Client via `GET /api/resource/OAuth Client`, keyed by a deterministic name (`IVarse Integration (<site-slug>)`) — reused if found, so reconnecting the same site never creates a duplicate Client. If none exists, it creates one via `POST /api/resource/OAuth Client` with `skip_authorization: 1` set, so the end user is never shown a consent screen.
+3. It drives the authorize→approve→token-exchange round trip server-side using that session, then stores the resulting **Client ID and Client Secret** (auto-populated, read-only, masked in the UI — the user never sees or types these) plus the access/refresh token pair (encrypted).
+4. Access tokens are refreshed automatically and transparently by `getCredentials()` when expired, using the stored refresh token — no user interaction needed after the initial connect.
 
 Manual API Key/Secret fields are not required (and are not cleared) once a config is OAuth-connected — switching back to manual entry is just a matter of leaving OAuth alone and filling those fields in; `authMethod` only reflects whichever path was used most recently.
 
-### CSRF Protection Without a Session Store
+**The idempotency guarantee** (point 2 above) is the reason this is safe to re-run: if an `erpnext-config` document is ever deleted and recreated for the same site, reconnecting finds and reuses the same OAuth Client by name instead of accumulating orphaned, unused Clients in ERPNext.
 
-Same pattern used elsewhere in this plugin (webhook signature verification) and by `payload-meta-plugin`'s Connect to Meta Business flow: the OAuth authorize→callback round trip goes through the ERPNext instance's servers and back, with no server-side session to carry a `configId` across that redirect. `signOAuthState()`/`verifyOAuthState()` (`utils/erpnextCrypto.ts`) HMAC-sign `configId:timestamp` (10-minute TTL) into the `state` param, verified on callback with a constant-time comparison.
+### Why This Flow Doesn't Need OAuth `state` Param Signing
+
+Unlike `payload-meta-plugin`'s Connect to Meta Business flow (a browser redirect out to Meta's servers and back, which needs a signed `state` param to survive that round trip statelessly), ERPNext's auto-connect is a single same-origin `POST /api/erpnext-oauth/auto-connect` — the browser never leaves the Payload admin, so there's no redirect boundary to protect against forgery across. It's protected instead by: requiring an authenticated `admin`/`super-admin` Payload session (`isAdminOrAbove`), and a per-IP rate limit (5 attempts per 60 seconds) against credential-stuffing the ERPNext login step.
 
 ---
 
@@ -133,6 +132,7 @@ export default buildConfig({
         emitSystemEvent,        // optional: enables ERPNext connection monitoring
         systemEvents,           // optional: { ERPNEXT_CONNECTION_FAILED, ERPNEXT_CONNECTION_RESTORED }
         isInternalAuth,         // optional: enables /api/erpnext/link-customer
+        siteCollectionsMap,     // optional: enables global/local grouping in the Sync Rules collection picker
       },
       enableAnonymousUpload: true, // optional, defaults to true
     }),
@@ -143,7 +143,7 @@ export default buildConfig({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `registry` | `ActionRegistryRef` | `undefined` | **Required for workflow actions**. The action registry to register `erp-get`, `erp-post`, `erp-patch`, and `erp-delete` handlers. |
-| `host` | `ERPNextHostBindings` | `undefined` | Host-injected automation primitives (`emitSystemEvent`, `systemEvents`, `isInternalAuth`). Keeps the plugin free of circular imports into the CMS. |
+| `host` | `ERPNextHostBindings` | `undefined` | Host-injected automation primitives (`emitSystemEvent`, `systemEvents`, `isInternalAuth`, `siteCollectionsMap`). Keeps the plugin free of circular imports into the CMS — see [Inbound Sync Rules](#inbound-sync-rules) for what `siteCollectionsMap` does. |
 | `enableAnonymousUpload` | `boolean` | `true` | Registers `/api/anonymous-upload` for form file attachments. |
 
 ### Environment Variables
@@ -151,14 +151,13 @@ export default buildConfig({
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ERPNEXT_ENCRYPTION_KEY` | **Required** | 32-byte hex AES-256-GCM key for encrypting credentials at rest. Generate with `openssl rand -hex 32`. |
-| `ERPNEXT_OAUTH_STATE_SECRET` | Optional | HMAC key for signing the OAuth `state` param (see [ERPNext OAuth2 Connect](#erpnext-oauth2-connect)). Falls back to `ERPNEXT_ENCRYPTION_KEY` if unset. |
 | `INTERNAL_API_SECRET` | **Recommended** | Shared secret for `isInternalAuth` checks (e.g. `/api/erpnext/link-customer`). Verified with constant-time comparison. |
 | `ERPNEXT_PROXY_KEY` | **Recommended** | Shared secret for server-to-server proxy access (`x-internal-key` header). Verified with constant-time comparison. |
 | `ERPNEXT_PROXY_REQUIRE_CAPTCHA` | Optional | Set to `true` to require a reCAPTCHA token on public write operations (`/api/erpnext-proxy/submit`). |
 | `REDIS_URL` | Optional | Enables Redis-backed rate limiting. Recommended for horizontal scaling. |
 | `TRUSTED_ORIGINS` | Optional | Comma-separated list of origins allowed for proxy and anonymous upload endpoints. |
 | `CORS_ORIGINS` | Optional | Fallback origin allow-list for proxy and anonymous upload endpoints. |
-| `PAYLOAD_PUBLIC_SERVER_URL` | Recommended | The CMS public URL; used as a trusted origin for anonymous uploads, and to build the OAuth callback redirect URI (`/api/erpnext-oauth/callback`). |
+| `PAYLOAD_PUBLIC_SERVER_URL` | Recommended | The CMS public URL; used as a trusted origin for anonymous uploads, and as the `redirect_uri` registered on each auto-created ERPNext OAuth Client. That URI is never actually hit by a browser (see [ERPNext OAuth2 Connect](#erpnext-oauth2-connect) — the whole exchange happens server-side), it just has to match what ERPNext's OAuth2 provider has on file for the request to be accepted. |
 | `NEXT_PUBLIC_PAYLOAD_URL` | Optional | Fallback public URL for anonymous upload origin checks. |
 | `TRUSTED_PROXY_COUNT` | Optional | Number of trusted proxies in front of the app, used for accurate IP extraction. |
 | `ALLOW_PLAINTEXT_ERPNEXT_CREDS` | Optional | Dangerous opt-out: allows storing ERPNext credentials without encryption when no `ERPNEXT_ENCRYPTION_KEY` is set. Not recommended for production. |
@@ -189,18 +188,16 @@ The plugin automatically extends the host's `workflows` collection steps with th
 
 ## Inbound Sync Rules
 
-The `erpnext-sync-rules` collection lets you map ERPNext DocType changes into Payload documents.
+The `erpnext-sync-rules` collection lets you map ERPNext DocType changes into Payload documents. Each rule is organized into four tabs:
 
-| Field | Description |
-|-------|-------------|
-| **Label** | Friendly name for the rule. |
-| **DocType** | ERPNext DocType to watch (e.g., `Customer`). |
-| **Target Collection** | Payload collection where incoming records should be created or updated. |
-| **Field Mappings** | Map ERPNext fields to Payload collection fields. |
-| **Deduplication** | Define a reference key + path so the same ERPNext record can be updated instead of duplicated. |
-| **Backfill** | Triggered automatically on save to fetch all existing ERPNext records for the configured DocType. |
+| Tab | Fields | Description |
+|-----|--------|-------------|
+| 🔗 Mapping | **DocType**, **Target Collection** | Which ERPNext DocType this rule watches, and which Payload collection it writes into. The collection picker is site-scoped: selecting a site shows only collections that site actually uses, grouped under **Local** (this site only) and **Global** (shared across sites) headings — it no longer lists every collection in the system regardless of site, and won't let you accidentally point one site's rule at another site's local collection. Requires `siteCollectionsMap` passed to the plugin (see [Configuration](#configuration)); falls back to an ungrouped list if omitted. |
+| 🗺️ Field Mappings | **Field Mappings** (array) | Map ERPNext fields to Payload fields. Exactly one row must be ticked **Is Upsert Key** — that field's value is used to look up an existing Payload document before deciding whether to create or update, preventing duplicates on repeat syncs. This replaced two separate standalone "upsert ERP field"/"upsert Payload field" text inputs — the truth now lives in one place, inside the mapping table itself, instead of needing to be kept in sync with it by hand. |
+| ⚙️ Advanced | **Constant Values**, **Status Sync**, **Customer-Group Promotion** | Constant Values sets fixed fields on every synced record (e.g. a `source` tag). Status Sync (optional — leave **Status Field** blank to turn it off) writes a mapped Payload status value whenever the ERPNext record's `status` matches a configured **Status Mapping** row; each row can also optionally promote the ERPNext customer to a different **Customer Group** (fetched live from ERPNext via `ERPNextCustomerGroupSelect`) — not one fixed group for the whole rule, a different group per status if needed. Both apply uniformly whether the sync came from the live webhook or a backfill. |
+| 📥 Backfill | **Backfill Filter**, **Backfill On Save** | An ERPNext REST filter (JSON) controlling which existing records a backfill pulls — e.g. skip disabled records or variant templates. Backfill runs automatically after save when **Backfill On Save** is ticked; it does not affect what the live webhook receives. |
 
-Use the **`/api/erpnext-sync?site=<site-slug>`** endpoint as the webhook target in ERPNext/Frappe. The endpoint verifies the webhook signature using the configured `webhookSecret` on the `erpnext-config` document.
+Use the **`/api/erpnext-sync?site=<site-slug>`** endpoint as the webhook target in ERPNext/Frappe. The endpoint verifies the webhook signature using the configured `webhookSecret` on the `erpnext-config` document — a site can have multiple active rules (different DocTypes, or multiple rules for the same DocType), all matching rules for the incoming DocType are applied.
 
 ---
 
@@ -240,14 +237,14 @@ All admin endpoints require `super-admin` or `admin` authentication.
 | `POST` | `/api/erpnext-config/fetch-companies` | Live dropdown population: fetches ERPNext Company list. |
 | `GET`  | `/api/erpnext-doctypes` | Live dropdown population: fetches ERPNext DocType list. |
 | `GET`  | `/api/erpnext-doctype-fields` | Live dropdown population: fetches fields for a selected DocType. |
-| `GET`  | `/api/cms-collections` | Lists writable Payload CMS collections (admin). |
+| `GET`  | `/api/cms-collections?siteId=<id>` | Lists writable Payload CMS collections (admin). With `siteId`, response is grouped into local (this site) vs. global (shared) collections using `siteCollectionsMap` — see [Inbound Sync Rules](#inbound-sync-rules). Without it, falls back to an ungrouped list. |
 | `GET`  | `/api/cms-collection-fields` | Lists fields for a Payload CMS collection (admin). |
+| `GET`  | `/api/erpnext-customer-groups?siteId=<id>` | Live dropdown population: fetches ERPNext Customer Group list for the Customer-Group Promotion field on Sync Rules. |
 | `POST` | `/api/erpnext/retry-dead-letters` | Retries dead-letter queue items. |
 | `POST` | `/api/anonymous-upload` | Anonymous file upload to Payload Media. |
 | `POST` | `/api/erpnext-sync?site=<site-slug>` | Inbound ERPNext/Frappe webhook receiver — verifies the HMAC signature against `webhookSecret`, then applies every active `erpnext-sync-rules` row matching the incoming DocType (a site can sync multiple DocTypes to multiple collections; see [Inbound Sync Rules](#inbound-sync-rules)). |
 | `POST` | `/api/erpnext/link-customer/:id` | Internal-only link between Payload customer and ERPNext Customer. |
-| `GET`  | `/api/erpnext-oauth/start?configId=<id>` | Redirects to ERPNext's OAuth2 authorize screen. Admin-only. See [ERPNext OAuth2 Connect](#erpnext-oauth2-connect). |
-| `GET`  | `/api/erpnext-oauth/callback` | OAuth2 callback — exchanges the code for a token pair and stores it on the config. |
+| `POST` | `/api/erpnext-oauth/auto-connect` | Login-based OAuth auto-connect — see [ERPNext OAuth2 Connect](#erpnext-oauth2-connect). Admin-only, rate-limited (5/min/IP). |
 
 ---
 
