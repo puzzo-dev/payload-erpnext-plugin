@@ -110,7 +110,7 @@ Manual API Key/Secret fields are not required (and are not cleared) once a confi
 
 ### Why This Flow Doesn't Need OAuth `state` Param Signing
 
-Unlike `payload-meta-plugin`'s Connect to Meta Business flow (a browser redirect out to Meta's servers and back, which needs a signed `state` param to survive that round trip statelessly), ERPNext's auto-connect is a single same-origin `POST /api/erpnext-oauth/auto-connect` — the browser never leaves the Payload admin, so there's no redirect boundary to protect against forgery across. It's protected instead by: requiring an authenticated `admin`/`super-admin` Payload session (`isAdminOrAbove`), and a per-IP rate limit (5 attempts per 60 seconds) against credential-stuffing the ERPNext login step.
+A `state` param exists to protect OAuth flows that redirect the browser out to a third-party authorization server and back — it's what lets the app verify, statelessly, that the request completing the round trip is the same one that started it. ERPNext's auto-connect has no such round trip to protect: it's a single same-origin `POST /api/erpnext-oauth/auto-connect`, and the browser never leaves the Payload admin. It's protected instead by: requiring an authenticated `admin`/`super-admin` Payload session (`isAdminOrAbove`), and a per-IP rate limit (5 attempts per 60 seconds) against credential-stuffing the ERPNext login step.
 
 ---
 
