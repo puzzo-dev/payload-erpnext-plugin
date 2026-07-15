@@ -18,6 +18,14 @@ import { getCredentials, authHeaders } from './erpnextProxy';
 
 const FETCH_DOCTYPES_RATE_LIMIT_MAX = 20
 const FETCH_DOCTYPES_RATE_LIMIT_WINDOW_MS = 60_000
+// Page size for a single ERPNext request, not a hard cap on the total list — the
+// endpoint accepts `limitStart` to page through everything via repeated calls (see
+// ERPNextDocTypeSelect's "Load more" button). A fixed one-shot limit_page_length with no
+// pagination was the original bug: any ERPNext instance with more DocTypes than this
+// constant (very common — stock ERPNext + a few installed apps easily exceeds 500) had
+// doctypes silently missing from the dropdown with no way to reach them, e.g. "Item"
+// landing outside whatever order ERPNext returned within the first batch.
+const DOCTYPES_PAGE_SIZE = 500
 
 export const fetchDocTypesEndpoint: Endpoint = {
     path: '/erpnext-doctypes',
@@ -48,6 +56,7 @@ export const fetchDocTypesEndpoint: Endpoint = {
 
             const siteId = req.query?.siteId as string | number | undefined
             const siteSlug = req.query?.siteSlug as string | undefined
+            const limitStart = Math.max(0, Number(req.query?.limitStart) || 0)
 
             if (!siteId && !siteSlug) {
                 return Response.json({ error: 'Provide siteId or siteSlug' }, { status: 400 })
@@ -89,8 +98,11 @@ export const fetchDocTypesEndpoint: Endpoint = {
                 return Response.json({ error: 'No active ERPNext config, or credentials are missing, for this site' }, { status: 400 })
             }
 
-            // Fetch DocTypes from ERPNext
-            const doctypesUrl = `${creds.url}/api/resource/DocType?fields=["name","module","istable","issingle"]&limit_page_length=500`
+            // Fetch DocTypes from ERPNext. order_by is essential once paging is involved —
+            // without an explicit, stable order, ERPNext's default ordering isn't
+            // guaranteed between requests, so a second page fetched via limit_start could
+            // repeat or skip records relative to the first.
+            const doctypesUrl = `${creds.url}/api/resource/DocType?fields=["name","module","istable","issingle"]&order_by=${encodeURIComponent('name asc')}&limit_page_length=${DOCTYPES_PAGE_SIZE}&limit_start=${limitStart}`
 
             const response = await fetch(doctypesUrl, {
                 method: 'GET',
@@ -109,7 +121,9 @@ export const fetchDocTypesEndpoint: Endpoint = {
                 data?: Array<{ name: string; module?: string; istable?: 0 | 1; issingle?: 0 | 1 }>
             }
 
-            const doctypes = (result.data ?? [])
+            const rawRecords = result.data ?? []
+
+            const doctypes = rawRecords
                 .filter((d) => d.issingle !== 1 && d.istable !== 1)
                 .map((d) => ({
                     value: d.name,
@@ -118,9 +132,19 @@ export const fetchDocTypesEndpoint: Endpoint = {
                 }))
                 .sort((a, b) => a.label.localeCompare(b.label))
 
+            // A full page of RAW records (before the istable/issingle filter, which can
+            // otherwise make a full page look short) means there's likely another page
+            // beyond this one. Not a precise total-count check — if the real total happens
+            // to be an exact multiple of the page size, one extra "Load more" click just
+            // returns an empty page and hasMore correctly flips to false — but it never
+            // hides real results the way a fixed one-shot limit did.
+            const hasMore = rawRecords.length === DOCTYPES_PAGE_SIZE
+
             return Response.json({
                 connected: true,
                 doctypes,
+                hasMore,
+                nextLimitStart: limitStart + DOCTYPES_PAGE_SIZE,
                 fetchedAt: new Date().toISOString(),
             })
         } catch (err) {

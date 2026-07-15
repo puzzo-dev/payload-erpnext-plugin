@@ -172,7 +172,7 @@ The plugin automatically extends the host's `workflows` collection steps with th
 
 | Field | Description |
 |-------|-------------|
-| **DocType** | ERPNext DocType (fetched live using a custom `ERPNextDocTypeSelect` component). |
+| **DocType** | ERPNext DocType (fetched live using a custom `ERPNextDocTypeSelect` component — paginated, with a "Load more" row inside the dropdown itself for ERPNext instances with more DocTypes than fit in one batch; scrolling to the bottom of the list also loads the next page automatically). |
 | **Action** | `Read / Search (GET)`, `Create (POST)`, `Update (PUT)`, or `Delete (DELETE)`. |
 | **Result Key** | The namespace prefix for output variables (e.g. `erp` → `{{erp_name}}`, `{{erp_result}}`). Prevents overwriting earlier step contexts. |
 | **Field Mappings** | Map target fields to source values. The target field input uses `ERPNextTargetFieldSelect` to display fields fetched dynamically from the selected DocType. |
@@ -235,8 +235,8 @@ All admin endpoints require `super-admin` or `admin` authentication.
 | `GET`  | `/api/erpnext-proxy/health` | Verifies ERPNext API credentials and connection. |
 | `POST` | `/api/erpnext-proxy/upload` | Proxies file uploads to ERPNext. |
 | `POST` | `/api/erpnext-config/fetch-companies` | Live dropdown population: fetches ERPNext Company list. |
-| `GET`  | `/api/erpnext-doctypes` | Live dropdown population: fetches ERPNext DocType list. |
-| `GET`  | `/api/erpnext-doctype-fields` | Live dropdown population: fetches fields for a selected DocType. |
+| `GET`  | `/api/erpnext-doctypes` | Live dropdown population: fetches ERPNext DocType list, paginated (`limitStart` query param; response includes `hasMore`/`nextLimitStart`) so instances with more DocTypes than a single batch aren't silently truncated. |
+| `GET`  | `/api/erpnext-doctype-fields` | Live dropdown population: fetches fields for a selected DocType, by reading the DocType document's own `fields` child table — not a direct `DocField` list query, which most ERPNext API roles don't have permission to read. |
 | `GET`  | `/api/cms-collections?siteId=<id>` | Lists writable Payload CMS collections (admin). With `siteId`, response is grouped into local (this site) vs. global (shared) collections using `siteCollectionsMap` — see [Inbound Sync Rules](#inbound-sync-rules). Without it, falls back to an ungrouped list. |
 | `GET`  | `/api/cms-collection-fields` | Lists fields for a Payload CMS collection (admin). |
 | `GET`  | `/api/erpnext-customer-groups?siteId=<id>` | Live dropdown population: fetches ERPNext Customer Group list for the Customer-Group Promotion field on Sync Rules. |

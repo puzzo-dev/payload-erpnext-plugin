@@ -61,9 +61,17 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
             const creds = await getCredentials(req.payload, site.slug)
             if (!creds) return Response.json({ error: 'No active ERPNext config, or credentials are missing' }, { status: 400 })
 
-            // Query DocField table where parent = doctype
+            // Fetch the DocType document itself rather than querying DocField directly.
+            // DocField is a child-table doctype (istable: 1) of DocType's own "fields"
+            // table field — Frappe's REST API generally denies direct list access to
+            // child-table doctypes for anything but System Manager-equivalent roles
+            // (a bare `/api/resource/DocField?filters=...` 403s/500s for typical
+            // Integration/API-key roles), which is what was producing the 502 here.
+            // Fetching the parent DocType document sidesteps that: its `fields` array
+            // is returned as part of the document itself, no separate DocField
+            // permission needed.
             const encodedDoctype = encodeURIComponent(doctype)
-            const fieldsUrl = `${creds.url}/api/resource/DocField?filters=[["parent","=","${encodedDoctype}"]]&fields=["fieldname","label","fieldtype"]&limit_page_length=500`
+            const fieldsUrl = `${creds.url}/api/resource/DocType/${encodedDoctype}`
 
             const response = await fetch(fieldsUrl, {
                 method: 'GET',
@@ -72,14 +80,18 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
             })
 
             if (!response.ok) {
+                const body = await response.text().catch(() => '')
+                req.payload.logger.error(
+                    `[fetch-doctype-fields] ERPNext returned HTTP ${response.status} for DocType "${doctype}": ${body.slice(0, 500)}`,
+                )
                 return Response.json({ error: `ERPNext returned HTTP ${response.status}` }, { status: 502 })
             }
 
             const result = await response.json() as {
-                data?: Array<{ fieldname: string; label?: string; fieldtype?: string }>
+                data?: { fields?: Array<{ fieldname: string; label?: string; fieldtype?: string }> }
             }
 
-            const fields = (result.data ?? [])
+            const fields = (result.data?.fields ?? [])
                 .filter(f => f.fieldname && f.fieldtype !== 'Section Break' && f.fieldtype !== 'Column Break')
                 .map((f) => ({
                     value: f.fieldname,
