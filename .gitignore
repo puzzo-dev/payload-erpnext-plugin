@@ -4,3 +4,16 @@ dist/
 .DS_Store
 .env
 .env.local
+
+# AI coding assistant scaffolding — not part of the published package
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.pi/
+.trae/
+.trae-cn/
+.vscode/

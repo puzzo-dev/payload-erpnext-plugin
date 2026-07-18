@@ -370,7 +370,7 @@ function normalizeOrigin(origin: string): string | null {
  *   3. Origin exactly matches CMS host or TRUSTED_ORIGINS → allowed
  *   4. Everything else → denied
  */
-async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Response, accessLevel: 'internal' | 'admin' | 'public' }> {
+async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Response, accessLevel: 'internal' | 'admin' | 'public', trustedSiteSlug?: string }> {
     // 1. Server-to-server: check internal API key (constant-time)
     const internalKey = process.env.ERPNEXT_PROXY_KEY
     if (internalKey) {
@@ -392,35 +392,41 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
     // Payload admin session (req.user is populated by Payload middleware).
     if (!origin && req.user) return { accessLevel: 'admin' } // Authenticated admin — allowed
 
-    // 3. Browser with origin: validate against CMS host + trusted origins
+    // 3. Browser with origin: validate against CMS host + trusted origins. Origins are
+    // tracked per-site (Map<normalizedOrigin, siteSlug>), not as a flat Set, so a request
+    // can only be trusted for the ONE site whose domain actually matched — an origin
+    // trusted for site A must never be able to claim credentials for site B by simply
+    // setting `site: "b"` in the request body (the caller must enforce trustedSiteSlug
+    // against its own `site` param; see erpnextProxySubmit et al.).
     if (origin) {
-        const trustedOrigins = new Set<string>()
+        const trustedOrigins = new Map<string, string>() // normalizedOrigin -> siteSlug ('' for env/localhost-wide trust)
 
-        // In development, local origins are acceptable for testing.
+        // In development, local origins are acceptable for testing, but grant no
+        // particular site — callers must still supply a `site` matching a real config.
         if (process.env.NODE_ENV !== 'production') {
-            trustedOrigins.add('http://localhost')
-            trustedOrigins.add('https://localhost')
-            trustedOrigins.add('http://127.0.0.1')
-            trustedOrigins.add('https://127.0.0.1')
+            trustedOrigins.set('http://localhost', '')
+            trustedOrigins.set('https://localhost', '')
+            trustedOrigins.set('http://127.0.0.1', '')
+            trustedOrigins.set('https://127.0.0.1', '')
         }
 
-        // CMS's own origin (protocol + host + port)
+        // CMS's own origin (protocol + host + port) — not bound to any one tenant.
         const cmsHost = process.env.PAYLOAD_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_PAYLOAD_URL || ''
         if (cmsHost) {
             const normalized = normalizeOrigin(cmsHost)
-            if (normalized) trustedOrigins.add(normalized)
+            if (normalized) trustedOrigins.set(normalized, '')
         }
 
-        // Additional trusted origins from env (comma-separated full URLs)
+        // Additional trusted origins from env (comma-separated full URLs) — also site-agnostic.
         const extra = process.env.TRUSTED_ORIGINS || process.env.CORS_ORIGINS || ''
         if (extra) {
             for (const o of extra.split(',')) {
                 const normalized = normalizeOrigin(o.trim())
-                if (normalized) trustedOrigins.add(normalized)
+                if (normalized) trustedOrigins.set(normalized, '')
             }
         }
 
-        // DB trusted origins from Sites collection
+        // DB trusted origins from Sites collection — each domain is bound to its own site's slug.
         try {
             const sites = await req.payload.find({
                 collection: 'sites',
@@ -433,7 +439,7 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
                 const addDomain = (raw: string) => {
                     const candidate = raw.startsWith('http') ? raw : `https://${raw}`
                     const normalized = normalizeOrigin(candidate)
-                    if (normalized) trustedOrigins.add(normalized)
+                    if (normalized) trustedOrigins.set(normalized, typeof s.slug === 'string' ? s.slug : '')
                 }
                 if (s.internalDomain) addDomain(s.internalDomain)
                 if (Array.isArray(s.allowedDomains)) {
@@ -448,7 +454,10 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
 
         // Compare full origin (protocol + hostname + port)
         const normalizedOrigin = normalizeOrigin(origin)
-        if (normalizedOrigin && trustedOrigins.has(normalizedOrigin)) return { accessLevel: 'public' } // Allowed public access
+        if (normalizedOrigin && trustedOrigins.has(normalizedOrigin)) {
+            const trustedSiteSlug = trustedOrigins.get(normalizedOrigin) || undefined
+            return { accessLevel: 'public', trustedSiteSlug } // Allowed public access
+        }
     }
 
     return {
@@ -458,6 +467,26 @@ async function validateProxyAccess(req: PayloadRequest): Promise<{ error?: Respo
         ),
         accessLevel: 'public'
     }
+}
+
+/**
+ * For 'public' access, the request's `site` must match the tenant its own Origin was
+ * actually trusted for — otherwise a request whose Origin matches site A's allowed
+ * domain could claim `site: "b"` and reach site B's ERPNext credentials. Site-agnostic
+ * trust (env-configured origins, CMS's own origin, localhost in dev) has no
+ * `trustedSiteSlug` and is intentionally left unrestricted (internal tooling).
+ * 'internal'/'admin' access levels are already fully trusted and skip this check.
+ */
+function enforceSiteBinding(accessLevel: 'internal' | 'admin' | 'public', trustedSiteSlug: string | undefined, requestedSite: string | null | undefined): Response | null {
+    if (accessLevel !== 'public') return null
+    if (!trustedSiteSlug) return null
+    if (requestedSite && requestedSite !== trustedSiteSlug) {
+        return Response.json(
+            { error: 'Unauthorized: requested site does not match the origin this request was trusted for' },
+            { status: 403 },
+        )
+    }
+    return null
 }
 
 async function applyProxyRateLimit(req: PayloadRequest): Promise<Response | null> {
@@ -482,7 +511,7 @@ export const erpnextProxySubmit: Endpoint = {
     method: 'post',
     handler: async (req) => {
         try {
-            const { error: accessDenied, accessLevel } = await validateProxyAccess(req)
+            const { error: accessDenied, accessLevel, trustedSiteSlug } = await validateProxyAccess(req)
             if (accessDenied) return accessDenied
 
             const rateLimited = await applyProxyRateLimit(req)
@@ -498,6 +527,13 @@ export const erpnextProxySubmit: Endpoint = {
             }
             const { doctype, data, site, captchaToken } = body as { doctype?: unknown; data?: unknown; site?: unknown; captchaToken?: unknown }
 
+            if (site !== undefined && (typeof site !== 'string' || site.length > 120)) {
+                return Response.json({ error: 'Invalid field: site (string, max 120 chars)' }, { status: 400 })
+            }
+
+            const siteBindingDenied = enforceSiteBinding(accessLevel, trustedSiteSlug, typeof site === 'string' ? site : undefined)
+            if (siteBindingDenied) return siteBindingDenied
+
             // Spoofable-origin abuse guard: strict rate limit + optional captcha for public writes.
             const writeGuard = await enforcePublicWriteGuards(req, accessLevel, typeof site === 'string' ? site : undefined, typeof captchaToken === 'string' ? captchaToken : undefined)
             if (writeGuard) return writeGuard
@@ -507,9 +543,6 @@ export const erpnextProxySubmit: Endpoint = {
             }
             if (!data || typeof data !== 'object' || Array.isArray(data)) {
                 return Response.json({ error: 'Missing or invalid required field: data (object)' }, { status: 400 })
-            }
-            if (site !== undefined && (typeof site !== 'string' || site.length > 120)) {
-                return Response.json({ error: 'Invalid field: site (string, max 120 chars)' }, { status: 400 })
             }
 
             if (!ALLOWED_SUBMIT_DOCTYPES.includes(doctype)) {
@@ -561,7 +594,7 @@ export const erpnextProxyResource: Endpoint = {
     method: 'get',
     handler: async (req) => {
         try {
-            const { error: accessDenied, accessLevel } = await validateProxyAccess(req)
+            const { error: accessDenied, accessLevel, trustedSiteSlug } = await validateProxyAccess(req)
             if (accessDenied) return accessDenied
 
             const rateLimited = await applyProxyRateLimit(req)
@@ -574,6 +607,9 @@ export const erpnextProxyResource: Endpoint = {
             const filters = url.searchParams.get('filters')
             const limitPageLength = url.searchParams.get('limit_page_length')
             const site = url.searchParams.get('site')
+
+            const siteBindingDenied = enforceSiteBinding(accessLevel, trustedSiteSlug, site)
+            if (siteBindingDenied) return siteBindingDenied
 
             if (!doctype) {
                 return Response.json({ error: 'Missing doctype query param' }, { status: 400 })
@@ -663,7 +699,7 @@ export const erpnextProxyHealth: Endpoint = {
             // proxy endpoints. Without this, an unauthenticated caller can force the
             // server to make an outbound request carrying the ERPNext credentials to
             // whatever URL the config points at (SSRF + credential-probe surface).
-            const { error: accessDenied } = await validateProxyAccess(req)
+            const { error: accessDenied, accessLevel, trustedSiteSlug } = await validateProxyAccess(req)
             if (accessDenied) return accessDenied
 
             const rateLimited = await applyProxyRateLimit(req)
@@ -671,6 +707,9 @@ export const erpnextProxyHealth: Endpoint = {
 
             const url = new URL(req.url || '', 'http://localhost')
             const site = url.searchParams.get('site')
+
+            const siteBindingDenied = enforceSiteBinding(accessLevel, trustedSiteSlug, site)
+            if (siteBindingDenied) return siteBindingDenied
 
             const creds = await getCredentials(req.payload, site, req)
             if (!creds) {
@@ -698,7 +737,7 @@ export const erpnextProxyUpload: Endpoint = {
     method: 'post',
     handler: async (req) => {
         try {
-            const { error: accessDenied, accessLevel } = await validateProxyAccess(req)
+            const { error: accessDenied, accessLevel, trustedSiteSlug } = await validateProxyAccess(req)
             if (accessDenied) return accessDenied
 
             const rateLimited = await applyProxyRateLimit(req)
@@ -713,6 +752,9 @@ export const erpnextProxyUpload: Endpoint = {
             const site = formData.get('site') as string;
             const file = formData.get('file') as File;
             const captchaToken = formData.get('captchaToken') as string | null;
+
+            const siteBindingDenied = enforceSiteBinding(accessLevel, trustedSiteSlug, site);
+            if (siteBindingDenied) return siteBindingDenied;
 
             // Spoofable-origin abuse guard: strict rate limit + optional captcha for public writes.
             const writeGuard = await enforcePublicWriteGuards(req, accessLevel, site, captchaToken);
