@@ -1,10 +1,5 @@
-import type { Access, PayloadRequest } from 'payload'
+import type { PayloadRequest } from 'payload'
 import { timingSafeEqual } from 'node:crypto'
-
-/**
- * Minimal access control helpers used by the plugin.
- * A full CMS can override these via the plugin options in the future.
- */
 
 export type UserWithRole = {
     id: string | number
@@ -12,15 +7,6 @@ export type UserWithRole = {
     email?: string
     organization?: string | number | { id: string | number } | null
     site?: string | number | { id: string | number } | null
-}
-
-export const anyone: Access = () => true
-
-export const authenticated: Access = ({ req: { user } }) => Boolean(user)
-
-export const superAdminOnly: Access = ({ req: { user } }) => {
-    if (!user) return false
-    return (user as unknown as UserWithRole).role === 'super-admin'
 }
 
 export function isInternalAuth(req: { headers?: { get: (name: string) => string | null } } | PayloadRequest): boolean {
