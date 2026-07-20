@@ -89,7 +89,7 @@ Go to **Settings → Workflows**:
 
 ## ERPNext OAuth2 Connect
 
-Two ways to authenticate an `ERPNext Config`, fully interchangeable — pick whichever suits a given site. Both populate the credentials `getCredentials()`/`authHeaders()` use, so nothing downstream (the proxy endpoints, workflow ERP actions) needs to know which was used. Tested end-to-end against a real ERPNext instance.
+Two ways to authenticate an `ERPNext Config`, fully interchangeable — pick whichever suits a given site. Both populate the credentials `getCredentials()`/`authHeaders()` use, so nothing downstream (the proxy endpoints, workflow ERP actions) needs to know which was used.
 
 ### Option A — Manual API Key/Secret
 
@@ -101,8 +101,9 @@ There is **no manual OAuth Client setup step** — no going into ERPNext's admin
 
 1. The plugin logs in to ERPNext via `POST /api/method/login` using the entered credentials (this call is never stored — only the resulting session is used, transiently, for the next steps).
 2. It looks up an existing OAuth Client via `GET /api/resource/OAuth Client`, keyed by a deterministic name (`IVarse Integration (<site-slug>)`) — reused if found, so reconnecting the same site never creates a duplicate Client. If none exists, it creates one via `POST /api/resource/OAuth Client` with `skip_authorization: 1` set, so the end user is never shown a consent screen.
-3. It drives the authorize→approve→token-exchange round trip server-side using that session, then stores the resulting **Client ID and Client Secret** (auto-populated, read-only, masked in the UI — the user never sees or types these) plus the access/refresh token pair (encrypted).
-4. Access tokens are refreshed automatically and transparently by `getCredentials()` when expired, using the stored refresh token — no user interaction needed after the initial connect.
+3. It calls ERPNext's `/authorize` endpoint server-side using that session. Because `skip_authorization` is set, ERPNext auto-approves and redirects in a **single hop** straight to the plugin's `redirect_uri` with `?code=&state=` — there's no separate "approve" confirmation redirect to follow, and that URL is only ever read off the `Location` header, never actually fetched (it isn't a route the plugin serves). The code is then exchanged for tokens.
+4. The resulting **Client ID and Client Secret** (auto-populated, read-only, masked in the UI — the user never sees or types these) and the access/refresh token pair are stored (encrypted).
+5. Access tokens are refreshed automatically and transparently by `getCredentials()` when expired, using the stored refresh token — no user interaction needed after the initial connect.
 
 Manual API Key/Secret fields are not required (and are not cleared) once a config is OAuth-connected — switching back to manual entry is just a matter of leaving OAuth alone and filling those fields in; `authMethod` only reflects whichever path was used most recently.
 
