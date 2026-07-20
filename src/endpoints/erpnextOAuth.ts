@@ -21,24 +21,19 @@ import { checkRateLimit, getClientIp } from '../utils/rateLimit'
  *      recreated — reuses the same ERPNext OAuth Client instead of
  *      accumulating orphaned ones.
  *   2. Drive the standard authorization-code grant server-side by hitting
- *      Frappe's real OAuth2 provider endpoints
- *      (frappe.integrations.oauth2.authorize / .approve) with the session
- *      cookie. The client is created with skip_authorization=1, so ERPNext
- *      auto-approves instead of showing a "Confirm Access" page — the whole
- *      thing happens inside this one request, nothing for the admin to
- *      click through.
+ *      Frappe's real OAuth2 provider endpoint
+ *      (frappe.integrations.oauth2.authorize) with the session cookie. The
+ *      client is created with skip_authorization=1, so ERPNext auto-approves
+ *      and redirects in a SINGLE hop straight to our redirect_uri with
+ *      ?code=&state= — no separate "Confirm Access" page and no second
+ *      "approve" redirect to follow; the whole thing happens inside this one
+ *      request, nothing for the admin to click through.
  *   3. Exchange the resulting code for an access/refresh token exactly like
  *      a normal OAuth2 authorization-code flow.
  *
  * Manual API Key/Secret entry (erpnextProxy.ts's existing
  * getCredentials()/authHeaders()) stays fully functional as an alternative;
  * this endpoint only sets authMethod + the oauth* fields.
- *
- * IMPORTANT: implemented strictly against Frappe's documented OAuth2
- * provider contract and the actual `OAuth Client` doctype schema/controller
- * (verified against the Frappe source, not guessed). Not yet exercised
- * against a real ERPNext instance in this environment — do a manual test
- * connect before relying on this in production.
  */
 
 function isAdminOrAbove(req: { user?: unknown }): boolean {
@@ -302,6 +297,11 @@ export const erpnextOAuthAutoConnectEndpoint: Endpoint = {
         // ── 3. Drive the authorization-code grant server-side ─────────────
         // skip_authorization on the client means ERPNext auto-approves — the
         // admin never sees a "Confirm Access" page, it all happens in this request.
+        // Because of skip_authorization, Frappe's /authorize redirects in a SINGLE
+        // hop straight to redirect_uri?code=&state= — there is no separate
+        // "approve" confirmation redirect to follow. That Location header value
+        // is only ever read here, never fetched — /erpnext-oauth/callback isn't
+        // (and doesn't need to be) a route this server actually serves.
         let code: string
         try {
             const state = randomUUID()
@@ -311,11 +311,7 @@ export const erpnextOAuthAutoConnectEndpoint: Endpoint = {
                 redirect_uri: redirectUri,
                 state,
             })}`
-            const approveLocation = await followRedirect(authorizeUrl, sessionCookie)
-            const finalLocation = await followRedirect(
-                approveLocation.startsWith('http') ? approveLocation : `${erpnextUrl}${approveLocation}`,
-                sessionCookie,
-            )
+            const finalLocation = await followRedirect(authorizeUrl, sessionCookie)
             const finalUrl = new URL(finalLocation.startsWith('http') ? finalLocation : `${erpnextUrl}${finalLocation}`)
             const returnedCode = finalUrl.searchParams.get('code')
             const returnedState = finalUrl.searchParams.get('state')
