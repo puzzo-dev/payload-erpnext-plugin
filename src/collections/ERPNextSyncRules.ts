@@ -42,6 +42,7 @@ const backfillOnSaveHook: CollectionAfterChangeHook = async ({ doc, req, context
                     data: { lastBackfillAt: new Date().toISOString(), lastBackfillStats: stats } as never,
                     overrideAccess: true,
                     context: { skipBackfill: true },
+                    req,
                 })
             } catch (err) {
                 log('error', `Backfill failed: ${err}`)

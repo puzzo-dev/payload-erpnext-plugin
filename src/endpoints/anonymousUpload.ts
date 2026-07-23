@@ -193,6 +193,7 @@ export const anonymousUploadEndpoint: Endpoint = {
                 size: file.size,
             },
             overrideAccess: true,
+            req,
         })
 
         const url = (mediaDoc as unknown as { url?: string; filename?: string }).url
