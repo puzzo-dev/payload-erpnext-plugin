@@ -47,7 +47,7 @@ function isPrivateOrReservedIpv6(ip: string): boolean {
     if (mappedDotted) return isPrivateOrReservedIpv4(mappedDotted[1])
     // IPv4-mapped IPv6 in hex form: ::ffff:7f00:1 (== 127.0.0.1)
     // Also matches full-form: 0:0:0:0:0:ffff:7f00:1
-    const mappedHex = norm.match(/^(?:0:){5}ffff:(\p{hexDigit}{1,4}):(\p{hexDigit}{1,4})$/u)
+    const mappedHex = norm.match(/^(?:0:){5}ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
     if (mappedHex) {
         const hi = parseInt(mappedHex[1], 16)
         const lo = parseInt(mappedHex[2], 16)
