@@ -2,6 +2,7 @@ import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { getUserSiteId, type UserWithRole } from '../types';
 import { getCredentials, authHeaders } from './erpnextProxy';
+import { validateErpUrl } from '../utils/ssrfGuard';
 
 /**
  * GET /api/erpnext-doctypes?siteId={siteId}&siteSlug={siteSlug}
@@ -102,7 +103,12 @@ export const fetchDocTypesEndpoint: Endpoint = {
             // without an explicit, stable order, ERPNext's default ordering isn't
             // guaranteed between requests, so a second page fetched via limit_start could
             // repeat or skip records relative to the first.
-            const doctypesUrl = `${creds.url}/api/resource/DocType?fields=["name","module","istable","issingle"]&order_by=${encodeURIComponent('name asc')}&limit_page_length=${DOCTYPES_PAGE_SIZE}&limit_start=${limitStart}`
+            const safeUrl = await validateErpUrl(creds.url)
+            if (!safeUrl) {
+                return Response.json({ error: 'ERPNext URL failed security validation' }, { status: 400 })
+            }
+
+            const doctypesUrl = `${safeUrl}/api/resource/DocType?fields=["name","module","istable","issingle"]&order_by=${encodeURIComponent('name asc')}&limit_page_length=${DOCTYPES_PAGE_SIZE}&limit_start=${limitStart}`
 
             const response = await fetch(doctypesUrl, {
                 method: 'GET',

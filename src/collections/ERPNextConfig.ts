@@ -4,6 +4,7 @@ import {
 } from '../access/roles';
 import { organizationField } from '../fields/organizationField';
 import { encryptCredential, decryptCredential } from '../utils/erpnextCrypto';
+import { validateErpUrl } from '../utils/ssrfGuard';
 import { getCredentials, authHeaders } from '../endpoints/erpnextProxy';
 import type { ERPNextCompany, UserWithRole } from '../types';
 
@@ -107,8 +108,8 @@ const autoFetchFromERPNext: CollectionAfterChangeHook = async ({ doc, previousDo
     const creds = await getCredentials(req.payload, siteSlug, req)
     if (!creds) return doc
 
-    const normalizedUrl = creds.url
-    if (process.env.NODE_ENV === 'production' && !normalizedUrl.startsWith('https://')) return doc
+    const normalizedUrl = await validateErpUrl(creds.url)
+    if (!normalizedUrl) return doc
 
     const headers = authHeaders(creds)
 

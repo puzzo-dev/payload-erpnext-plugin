@@ -2,6 +2,7 @@ import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit'
 import { getUserSiteId, type UserWithRole } from '../types'
 import { getCredentials, authHeaders } from './erpnextProxy'
+import { validateErpUrl } from '../utils/ssrfGuard'
 
 const FETCH_FIELDS_RATE_LIMIT_MAX = 30
 const FETCH_FIELDS_RATE_LIMIT_WINDOW_MS = 60_000
@@ -70,8 +71,13 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
             // Fetching the parent DocType document sidesteps that: its `fields` array
             // is returned as part of the document itself, no separate DocField
             // permission needed.
+            const safeUrl = await validateErpUrl(creds.url)
+            if (!safeUrl) {
+                return Response.json({ error: 'ERPNext URL failed security validation' }, { status: 400 })
+            }
+
             const encodedDoctype = encodeURIComponent(doctype)
-            const fieldsUrl = `${creds.url}/api/resource/DocType/${encodedDoctype}`
+            const fieldsUrl = `${safeUrl}/api/resource/DocType/${encodedDoctype}`
 
             const response = await fetch(fieldsUrl, {
                 method: 'GET',

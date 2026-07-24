@@ -2,6 +2,7 @@ import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import { getUserSiteId, type UserWithRole } from '../types';
 import { getCredentials, authHeaders } from './erpnextProxy';
+import { validateErpUrl } from '../utils/ssrfGuard';
 
 /**
  * GET /api/erpnext-customer-groups?siteId={siteId}
@@ -73,7 +74,12 @@ export const fetchCustomerGroupsEndpoint: Endpoint = {
                 return Response.json({ error: 'No active ERPNext config, or credentials are missing, for this site' }, { status: 400 })
             }
 
-            const groupsUrl = `${creds.url}/api/resource/Customer Group?fields=["name","is_group"]&limit_page_length=500`
+            const safeUrl = await validateErpUrl(creds.url)
+            if (!safeUrl) {
+                return Response.json({ error: 'ERPNext URL failed security validation' }, { status: 400 })
+            }
+
+            const groupsUrl = `${safeUrl}/api/resource/Customer Group?fields=["name","is_group"]&limit_page_length=500`
 
             const response = await fetch(groupsUrl, {
                 method: 'GET',

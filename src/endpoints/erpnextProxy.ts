@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
 import type { ERPNextCredentials } from '../types';
 import { decryptCredential } from '../utils/erpnextCrypto';
+import { isSafeOutboundHost } from '../utils/ssrfGuard';
 import { refreshOAuthToken } from './erpnextOAuth';
 
 /**
@@ -103,18 +104,26 @@ export async function getCredentials(
 
     const isMasked = (v: string) => v.includes('\u2022')
 
-    const validateUrl = (url: string): boolean => {
+    const validateUrl = async (url: string): Promise<boolean> => {
+        let parsed: URL
         try {
-            const parsed = new URL(url)
-            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
-            if (parsed.protocol === 'http:' && process.env.NODE_ENV === 'production') {
-                payload.logger.error('[ERPNext-Proxy] Refusing to use non-HTTPS ERPNext URL in production')
-                return false
-            }
-            return true
+            parsed = new URL(url)
         } catch {
             return false
         }
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+        if (parsed.protocol === 'http:' && process.env.NODE_ENV === 'production') {
+            payload.logger.error('[ERPNext-Proxy] Refusing to use non-HTTPS ERPNext URL in production')
+            return false
+        }
+        // SSRF guard: erpnextUrl is admin-gated (see ERPNextConfig.ts) but a
+        // multi-tenant site admin is not necessarily trusted with server-
+        // infrastructure access — refuse loopback/link-local/private targets.
+        if (!(await isSafeOutboundHost(parsed.hostname))) {
+            payload.logger.error(`[ERPNext-Proxy] Refusing to use private/internal ERPNext URL: ${parsed.hostname}`)
+            return false
+        }
+        return true
     }
 
     /**
@@ -122,9 +131,9 @@ export async function getCredentials(
      * If masking leaked through (Payload bug), we log and fail closed instead of
      * falling back to raw SQL — raw SQL bypasses access control and breaks on schema changes.
      */
-    const buildApiKeyCreds = (
+    const buildApiKeyCreds = async (
         cfg: Record<string, unknown>,
-    ): ERPNextCredentials | null => {
+    ): Promise<ERPNextCredentials | null> => {
         const url = (cfg.erpnextUrl as string)?.replace(/\/+$/, '')
         const rawKey = cfg.apiKey as string
         const rawSecret = cfg.apiSecret as string
@@ -132,7 +141,7 @@ export async function getCredentials(
         const autoInjectCompany = cfg.autoInjectCompany !== false
 
         if (!url || !rawKey || !rawSecret) return null
-        if (!validateUrl(url)) return null
+        if (!(await validateUrl(url))) return null
         if (isMasked(rawKey) || isMasked(rawSecret)) {
             // The user-stripping approach should prevent this, but if masking still
             // leaks through for any reason, fail closed rather than using masked creds.
@@ -162,7 +171,7 @@ export async function getCredentials(
         const url = (cfg.erpnextUrl as string)?.replace(/\/+$/, '')
         const company = (cfg.erpnextCompany as string) || undefined
         const autoInjectCompany = cfg.autoInjectCompany !== false
-        if (!url || !validateUrl(url)) return null
+        if (!url || !(await validateUrl(url))) return null
 
         const rawToken = cfg.oauthAccessToken as string | undefined
         const expiresAt = cfg.oauthExpiresAt as string | undefined
@@ -236,7 +245,7 @@ export async function getCredentials(
                 const cfg = configs.docs[0] as unknown as Record<string, unknown>
                 const creds = cfg.authMethod === 'oauth'
                     ? await buildOAuthCreds(cfg)
-                    : buildApiKeyCreds(cfg)
+                    : await buildApiKeyCreds(cfg)
                 if (creds) return creds
             }
         }

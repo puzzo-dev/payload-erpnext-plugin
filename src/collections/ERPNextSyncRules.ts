@@ -4,6 +4,7 @@ import {
 } from '../access/roles'
 import { organizationField } from '../fields/organizationField'
 import { getCredentials } from '../endpoints/erpnextProxy'
+import { validateErpUrl } from '../utils/ssrfGuard'
 import { backfillSyncRule, type ERPNextSyncRule } from '../sync/runSyncRule'
 
 const SYNC_RULES_SLUG = 'erpnext-sync-rules' as unknown as CollectionSlug
@@ -35,6 +36,12 @@ const backfillOnSaveHook: CollectionAfterChangeHook = async ({ doc, req, context
                     log('warn', 'No active ERPNext credentials for site — skipping backfill', { siteSlug })
                     return
                 }
+                const safeUrl = await validateErpUrl(creds.url)
+                if (!safeUrl) {
+                    log('warn', 'ERPNext URL failed SSRF validation — skipping backfill', { siteSlug })
+                    return
+                }
+                creds.url = safeUrl
                 const stats = await backfillSyncRule(req, rule, creds, log)
                 await payload.update({
                     collection: SYNC_RULES_SLUG,

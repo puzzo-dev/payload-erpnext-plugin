@@ -3,6 +3,7 @@ import type { ERPNextWebhookPayload } from '../types'
 import { verifyERPNextWebhookSignature } from '../utils/webhookSignature'
 import { findRulesForDoctype, upsertErpRecord, deleteErpRecord, resolveSiteId } from '../sync/runSyncRule'
 import { getCredentials } from './erpnextProxy'
+import { validateErpUrl } from '../utils/ssrfGuard'
 
 /**
  * POST /api/erpnext-sync?site=<slug>
@@ -112,6 +113,14 @@ export const syncFromERPNextEndpoint: Endpoint = {
             // on it when a rule doesn't set customerGroupField) — resolved once per request
             // rather than per rule, it's just a DB lookup, not an ERPNext API call.
             const creds = deleting ? null : await getCredentials(req.payload, siteSlug, req)
+            if (!deleting && creds) {
+                const safeUrl = await validateErpUrl(creds.url)
+                if (!safeUrl) {
+                    log('error', 'ERPNext URL failed SSRF validation', { siteSlug })
+                    return Response.json({ error: 'ERPNext URL failed security validation' }, { status: 400 })
+                }
+                creds.url = safeUrl
+            }
             const results: Array<Record<string, unknown>> = []
             for (const rule of rules) {
                 const ruleSiteId = resolveSiteId(rule.site)

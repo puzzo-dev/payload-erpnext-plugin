@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { verifyERPNextWebhookSignature } from './webhookSignature'
 
 describe('webhookSignature', () => {
-    const secret = 'shh'
+    const secret = randomBytes(32).toString('hex')
     const body = '{"event":"on_update","doctype":"Customer"}'
 
     it('accepts a valid hex signature', () => {
