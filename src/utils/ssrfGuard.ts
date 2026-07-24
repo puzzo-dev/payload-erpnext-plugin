@@ -40,8 +40,20 @@ function isPrivateOrReservedIpv6(ip: string): boolean {
     if (norm === '::1' || norm === '::') return true
     if (norm.startsWith('fe80:')) return true // link-local
     if (norm.startsWith('fc') || norm.startsWith('fd')) return true // unique local, fc00::/7
-    const mapped = norm.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-    if (mapped) return isPrivateOrReservedIpv4(mapped[1])
+    if (norm.startsWith('ff')) return true // multicast, ff00::/8
+    if (norm.startsWith('2001:db8:')) return true // documentation, 2001:db8::/32
+    // IPv4-mapped IPv6 in dotted-decimal form: ::ffff:127.0.0.1
+    const mappedDotted = norm.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+    if (mappedDotted) return isPrivateOrReservedIpv4(mappedDotted[1])
+    // IPv4-mapped IPv6 in hex form: ::ffff:7f00:1 (== 127.0.0.1)
+    // Also matches full-form: 0:0:0:0:0:ffff:7f00:1
+    const mappedHex = norm.match(/^(?:0:){5}ffff:(\p{hexDigit}{1,4}):(\p{hexDigit}{1,4})$/u)
+    if (mappedHex) {
+        const hi = parseInt(mappedHex[1], 16)
+        const lo = parseInt(mappedHex[2], 16)
+        const ipv4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+        return isPrivateOrReservedIpv4(ipv4)
+    }
     return false
 }
 

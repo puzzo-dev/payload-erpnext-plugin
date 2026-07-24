@@ -84,7 +84,7 @@ async function markDisconnected(
 
 /**
  * Resolve ERPNext credentials from the erpnext-config collection.
- * Looks up by site slug or site ID. Falls back to env vars for backward compatibility.
+ * Looks up by site slug or site ID.
  */
 export async function getCredentials(
     payload: Parameters<Endpoint['handler']>[0]['payload'],
@@ -795,6 +795,7 @@ export const erpnextProxyUpload: Endpoint = {
                     Authorization: authHeaders(creds).Authorization,
                 },
                 body: erpFormData,
+                signal: AbortSignal.timeout(30_000),
             });
 
             if (!response.ok) {
