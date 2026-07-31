@@ -42,7 +42,11 @@ describe('erpnextCrypto', () => {
 
     it('returns raw value on tampered ciphertext', () => {
         const encrypted = encryptCredential('secret')
-        const tampered = encrypted.replace(/[0-9a-f]$/, '0')
+        // Flip the final hex digit to a DIFFERENT one. Replacing it with a fixed
+        // '0' was a ~1-in-16 flake: when the ciphertext already ended in '0' the
+        // "tampered" value was byte-identical, so it decrypted cleanly and the
+        // assertion below compared 'secret' against the untouched ciphertext.
+        const tampered = encrypted.replace(/[0-9a-f]$/, (c) => (c === '0' ? '1' : '0'))
         // Decrypt should not throw; it should return the raw stored value.
         assert.doesNotThrow(() => decryptCredential(tampered))
         assert.strictEqual(decryptCredential(tampered), tampered)

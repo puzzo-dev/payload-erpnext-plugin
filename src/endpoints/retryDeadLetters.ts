@@ -134,6 +134,14 @@ export const retryDeadLettersEndpoint: Endpoint = {
                             collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                             id,
                             req,
+                            // The collection restricts update to superAdminOnly, but this
+                            // endpoint also admits `admin` — without this an admin's retry
+                            // threw 403 on the status write, and the catch below then threw
+                            // a second 403 recording the failure, surfacing as a 500 and a
+                            // burst of "You are not allowed to perform this action." The
+                            // caller is already authorised and confined to their own org's
+                            // sites above; this is a system status write, not a content edit.
+                            overrideAccess: true,
                             data: {
                                 status: 'success',
                                 retryCount: retryCount + 1,
@@ -147,6 +155,14 @@ export const retryDeadLettersEndpoint: Endpoint = {
                             collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                             id,
                             req,
+                            // The collection restricts update to superAdminOnly, but this
+                            // endpoint also admits `admin` — without this an admin's retry
+                            // threw 403 on the status write, and the catch below then threw
+                            // a second 403 recording the failure, surfacing as a 500 and a
+                            // burst of "You are not allowed to perform this action." The
+                            // caller is already authorised and confined to their own org's
+                            // sites above; this is a system status write, not a content edit.
+                            overrideAccess: true,
                             data: {
                                 status: 'failed',
                                 retryCount: retryCount + 1,
@@ -161,6 +177,8 @@ export const retryDeadLettersEndpoint: Endpoint = {
                         collection: 'erpnext-dead-letters' as unknown as CollectionSlug,
                         id,
                         req,
+                        // See the note on the status writes above — same reason.
+                        overrideAccess: true,
                         data: {
                             status: 'failed',
                             retryCount: retryCount + 1,
