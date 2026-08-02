@@ -1,6 +1,28 @@
-import type { CollectionSlug, Payload, PayloadRequest } from 'payload'
+import type { CollectionSlug, Payload, PayloadRequest, Where } from 'payload'
 import type { ERPNextCredentials, LogFn } from '../types'
 import { authHeaders } from '../endpoints/erpnextProxy'
+import {
+    coerceConstant,
+    erpFetchFields,
+    getUpsertKeyMapping,
+    resolveSiteId,
+    slugify,
+    type ERPNextFieldMapping,
+    type ERPNextSyncRule,
+} from './transforms'
+
+// Re-exported so importers keep a single entry point for the sync engine — the
+// transforms.ts split is about testability, not about a second public module.
+export {
+    coerceConstant,
+    erpFetchFields,
+    getUpsertKeyMapping,
+    resolveSiteId,
+    slugify,
+    type ERPNextFieldMapping,
+    type ERPNextSyncRule,
+    type MappingTransform,
+} from './transforms'
 
 /** Timeout for ancillary ERPNext API calls (status-mapped customer group promotion). */
 const CUSTOMER_PROMOTION_TIMEOUT_MS = 15000
@@ -51,67 +73,109 @@ async function promoteCustomerToGroup(
  * logic below.
  */
 
-/** A row from the `erpnext-sync-rules` collection (shape only — not in generated types). */
-export interface ERPNextSyncRule {
-    id: string | number
-    site: string | number | { id: string | number }
-    doctype: string
-    targetCollection: string
-    /**
-     * Exactly one row must have isUpsertKey: true — that row's erp_field/payload_field
-     * pair IS the unique key used to match an incoming ERP record to an existing Payload
-     * document. There used to be a separate standalone upsert_erp_field/upsert_payload_field
-     * pair, which meant an admin configuring "this field is both mapped AND the key" had to
-     * enter the same field twice. field_mappings is now the single source of truth — see
-     * getUpsertKeyMapping().
-     */
-    field_mappings?: Array<{ erp_field?: string | null; payload_field?: string | null; isUpsertKey?: boolean | null }>
-    constant_values?: Array<{ payload_field?: string | null; value?: string | null }>
-    /** Raw ERPNext REST filter (e.g. [["has_variants","=",0]]) applied to the backfill query. */
-    filters?: unknown
-    /** Payload field on targetCollection to write the mapped status to. Unset disables status sync. */
-    statusField?: string | null
-    /** ERPNext status value -> Payload status value, with an optional per-status customer group promotion. */
-    statusMappings?: Array<{ erpStatus?: string | null; payloadStatus?: string | null; customerGroup?: string | null }>
-    /** ERPNext field used to look up the customer for group promotion. Unset disables promotion for every status mapping. */
-    customerGroupField?: string | null
-    isActive?: boolean
-    backfillOnSave?: boolean
-}
-
-/** Coerce an all-digit constant to a number so relationship (int id) fields validate. */
-function coerceConstant(value: string): string | number {
-    return /^\d+$/.test(value) ? Number(value) : value
-}
-
 const SYNC_RULES_SLUG = 'erpnext-sync-rules' as unknown as CollectionSlug
 
 /** Timeout for backfill pulls from ERPNext. */
 const BACKFILL_TIMEOUT_MS = 30000
 
-export function resolveSiteId(site: ERPNextSyncRule['site']): string | number {
-    return typeof site === 'object' && site !== null ? site.id : site
+/** Does a collection declare a top-level field with this name? */
+function collectionHasField(req: PayloadRequest, slug: string, fieldName: string): boolean {
+    const config = req.payload.collections?.[slug]?.config
+    if (!config) return false
+    const walk = (fields: unknown[]): boolean =>
+        fields.some((f) => {
+            const field = f as { type?: string; name?: string; fields?: unknown[]; tabs?: Array<{ name?: string; fields?: unknown[] }> }
+            if (field.type === 'row' || field.type === 'collapsible') return walk(field.fields ?? [])
+            if (field.type === 'tabs') return (field.tabs ?? []).some((t) => (t.name ? t.name === fieldName : walk(t.fields ?? [])))
+            return field.name === fieldName
+        })
+    return walk(config.fields as unknown[])
 }
 
 /**
- * The field_mappings row marked as the unique key. Returns null if no row is
- * marked (the collection's own validation should prevent saving that state,
- * but callers still fail closed — skip rather than guess — if it happens).
+ * Resolve an ERP display value to a related Payload document's ID, for `relationship`
+ * fields. Scoped to the same site when the looked-up collection is site-scoped, so one
+ * tenant's "Cocktails" category can never be linked from another tenant's records.
+ * Returns undefined when nothing matches — the caller leaves the field unset rather
+ * than writing a bad reference, and Payload's own required-field validation then
+ * reports it (surfacing as a skipped record with a readable error).
  */
-export function getUpsertKeyMapping(rule: ERPNextSyncRule): { erp_field: string; payload_field: string } | null {
-    const found = rule.field_mappings?.find((m) => m.isUpsertKey && m.erp_field && m.payload_field)
-    if (!found?.erp_field || !found?.payload_field) return null
-    return { erp_field: found.erp_field, payload_field: found.payload_field }
+async function resolveLookup(
+    req: PayloadRequest,
+    mapping: ERPNextFieldMapping,
+    rawValue: unknown,
+    siteId: string | number,
+    log?: LogFn,
+): Promise<unknown> {
+    const { lookup_collection: collection, lookup_field: field } = mapping
+    if (!collection || !field) {
+        log?.('warn', 'Lookup transform missing collection/field — leaving unset', { payload_field: mapping.payload_field })
+        return undefined
+    }
+    const conditions: Where[] = [{ [field]: { equals: rawValue } }]
+    if (collectionHasField(req, collection, 'site')) conditions.push({ site: { equals: siteId } })
+
+    const res = await req.payload.find({
+        collection: collection as CollectionSlug,
+        where: conditions.length > 1 ? { and: conditions } : conditions[0],
+        limit: 1,
+        depth: 0,
+        overrideAccess: true,
+        // Same reason as findExisting: a draft-only related doc must still be matchable,
+        // otherwise the lookup misses and the parent record fails to validate.
+        draft: true,
+    })
+    if (res.totalDocs === 0) {
+        log?.('warn', `Lookup found no ${collection} with ${field} = "${String(rawValue)}" — leaving ${mapping.payload_field} unset`)
+        return undefined
+    }
+    return (res.docs[0] as { id: string | number }).id
 }
 
-/** Map one ERPNext record onto Payload field names using the rule's field map. */
-export function mapErpRecord(rule: ERPNextSyncRule, erpRecord: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Apply a mapping row's transform to one raw ERPNext value. Null/empty passes through
+ * untouched — an absent source value should stay absent, not become the slug "" or
+ * trigger a lookup for nothing.
+ */
+export async function applyMappingTransform(
+    req: PayloadRequest,
+    mapping: ERPNextFieldMapping,
+    rawValue: unknown,
+    siteId: string | number,
+    log?: LogFn,
+): Promise<unknown> {
+    if (rawValue === undefined || rawValue === null || rawValue === '') return rawValue
+    switch (mapping.transform) {
+        case 'slugify':
+            return slugify(String(rawValue))
+        case 'lookup':
+            return resolveLookup(req, mapping, rawValue, siteId, log)
+        default:
+            return rawValue
+    }
+}
+
+/**
+ * Map one ERPNext record onto Payload field names using the rule's field map,
+ * running each row's transform (slugify / relationship lookup) on the way.
+ */
+export async function mapErpRecord(
+    req: PayloadRequest,
+    rule: ERPNextSyncRule,
+    erpRecord: Record<string, unknown>,
+    siteId: string | number,
+    log?: LogFn,
+): Promise<Record<string, unknown>> {
     const out: Record<string, unknown> = {}
     // The upsert-key row is itself a normal field_mappings row (isUpsertKey just marks
     // which one it is), so this loop already copies it — no separate assignment needed.
     for (const m of rule.field_mappings ?? []) {
         if (m.erp_field && m.payload_field) {
-            out[m.payload_field] = erpRecord[m.erp_field]
+            const value = await applyMappingTransform(req, m, erpRecord[m.erp_field], siteId, log)
+            // An unresolved lookup must not write `undefined` over an existing value on
+            // update — omit the key entirely and leave whatever the document already has.
+            if (value === undefined && m.transform === 'lookup') continue
+            out[m.payload_field] = value
         }
     }
     // Owner-declared constant/default values for required target fields the ERP does
@@ -122,15 +186,6 @@ export function mapErpRecord(rule: ERPNextSyncRule, erpRecord: Record<string, un
         }
     }
     return out
-}
-
-/** The ERPNext field names a rule needs fetched — just the field_mappings, the upsert key is one of them. */
-export function erpFetchFields(rule: ERPNextSyncRule): string[] {
-    const fields = new Set<string>()
-    for (const m of rule.field_mappings ?? []) {
-        if (m.erp_field) fields.add(m.erp_field)
-    }
-    return [...fields]
 }
 
 /** Find the Payload doc a given ERP record maps to (by upsert key + site), if any. */
@@ -226,17 +281,21 @@ export async function upsertErpRecord(
         log?.('warn', 'No field mapping marked as the unique key — skipping', { doctype: rule.doctype })
         return { action: 'skipped' }
     }
-    const keyValue = erpRecord[keyMapping.erp_field]
+    const keyValue = await applyMappingTransform(req, keyMapping, erpRecord[keyMapping.erp_field], siteId, log)
     if (keyValue === undefined || keyValue === null || keyValue === '') {
         log?.('warn', `Record missing upsert key "${keyMapping.erp_field}" — skipping`, { doctype: rule.doctype })
         return { action: 'skipped' }
     }
 
-    const data = mapErpRecord(rule, erpRecord)
+    const data = await mapErpRecord(req, rule, erpRecord, siteId, log)
     // ERP is the source of truth, so synced records go live immediately. On collections
     // with drafts enabled, `_status: 'published'` publishes them (otherwise they'd land as
     // drafts and never appear); on non-draft collections Payload ignores the extra key.
     data._status = 'published'
+    // Stamp when THIS system last pulled the record, on updates as well as creates —
+    // an already-existing document is exactly the case where the operator needs to see
+    // that the ERPNext link is live and when it last ran.
+    if (rule.syncedAtField) data[rule.syncedAtField] = new Date().toISOString()
     const existing = await findExisting(req, rule, keyMapping, keyValue, siteId)
 
     if (existing) {
@@ -307,7 +366,9 @@ export async function deleteErpRecord(
 ): Promise<{ action: 'deleted' | 'skipped'; id?: string | number }> {
     const keyMapping = getUpsertKeyMapping(rule)
     if (!keyMapping) return { action: 'skipped' }
-    const keyValue = erpRecord[keyMapping.erp_field]
+    // Same transform as the upsert path — the stored value is the transformed one, so
+    // an un-transformed key would fail to find the document and silently skip the delete.
+    const keyValue = await applyMappingTransform(req, keyMapping, erpRecord[keyMapping.erp_field], siteId, log)
     if (keyValue === undefined || keyValue === null || keyValue === '') return { action: 'skipped' }
 
     const existing = await findExisting(req, rule, keyMapping, keyValue, siteId)
@@ -344,6 +405,21 @@ export async function findRulesForDoctype(
     return res.docs as unknown as ERPNextSyncRule[]
 }
 
+/** Distinct error messages kept in the stats, so one bad mapping doesn't store 500 identical strings. */
+const MAX_REPORTED_ERRORS = 5
+
+export interface BackfillStats {
+    pulled: number
+    created: number
+    updated: number
+    /** Deliberately not synced: no upsert key configured, or the record has no value for it. */
+    skipped: number
+    /** Tried to sync and errored — almost always target-collection validation. */
+    failed: number
+    /** Up to MAX_REPORTED_ERRORS distinct messages behind `failed`, newest last. */
+    errors: string[]
+}
+
 /**
  * Backfill: pull every existing record of the rule's DocType from ERPNext and upsert
  * them. Data often pre-exists in ERPNext long before the Payload deployment, so this
@@ -354,7 +430,7 @@ export async function backfillSyncRule(
     rule: ERPNextSyncRule,
     creds: ERPNextCredentials,
     log?: LogFn,
-): Promise<{ pulled: number; created: number; updated: number; skipped: number }> {
+): Promise<BackfillStats> {
     const siteId = resolveSiteId(rule.site)
     const fields = erpFetchFields(rule)
     // limit_page_length=0 returns all rows in Frappe/ERPNext.
@@ -384,18 +460,28 @@ export async function backfillSyncRule(
 
     const body = (await res.json()) as { data?: Record<string, unknown>[] }
     const records = body.data ?? []
-    const stats = { pulled: records.length, created: 0, updated: 0, skipped: 0 }
+    // `failed` is tracked separately from `skipped` on purpose. They used to share one
+    // counter, which made a rule that could not write a single record ("17 skipped")
+    // read like a rule that had correctly decided there was nothing to do. A non-zero
+    // `failed` always means something is misconfigured; a non-zero `skipped` may not be.
+    const stats: BackfillStats = { pulled: records.length, created: 0, updated: 0, skipped: 0, failed: 0, errors: [] }
 
     for (const record of records) {
         try {
             const result = await upsertErpRecord(req, rule, record, siteId, creds, log)
             stats[result.action] += 1
         } catch (err) {
-            stats.skipped += 1
+            stats.failed += 1
+            const message = err instanceof Error ? err.message : String(err)
+            // Store the distinct reasons, not one line per record — the same broken
+            // mapping produces the identical message for every record it touches.
+            if (!stats.errors.includes(message) && stats.errors.length < MAX_REPORTED_ERRORS) {
+                stats.errors.push(message)
+            }
             log?.('error', `Backfill upsert failed`, { doctype: rule.doctype, error: String(err) })
         }
     }
 
-    log?.('info', `Backfill complete for ${rule.doctype} → ${rule.targetCollection}`, stats)
+    log?.('info', `Backfill complete for ${rule.doctype} → ${rule.targetCollection}`, { ...stats })
     return stats
 }

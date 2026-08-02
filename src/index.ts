@@ -242,6 +242,11 @@ export {
     deleteErpRecord,
     findRulesForDoctype,
     mapErpRecord,
+    applyMappingTransform,
+    slugify,
     type ERPNextSyncRule,
+    type ERPNextFieldMapping,
+    type MappingTransform,
+    type BackfillStats,
 } from './sync/runSyncRule'
 export type { ERPNextCredentials } from './types'

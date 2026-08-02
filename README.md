@@ -194,9 +194,36 @@ The `erpnext-sync-rules` collection lets you map ERPNext DocType changes into Pa
 | Tab | Fields | Description |
 |-----|--------|-------------|
 | 🔗 Mapping | **DocType**, **Target Collection** | Which ERPNext DocType this rule watches, and which Payload collection it writes into. The collection picker is site-scoped: selecting a site shows only collections that site actually uses, grouped under **Local** (this site only) and **Global** (shared across sites) headings — it no longer lists every collection in the system regardless of site, and won't let you accidentally point one site's rule at another site's local collection. Requires `siteCollectionsMap` passed to the plugin (see [Configuration](#configuration)); falls back to an ungrouped list if omitted. |
-| 🗺️ Field Mappings | **Field Mappings** (array) | Map ERPNext fields to Payload fields. Exactly one row must be ticked **Is Upsert Key** — that field's value is used to look up an existing Payload document before deciding whether to create or update, preventing duplicates on repeat syncs. This replaced two separate standalone "upsert ERP field"/"upsert Payload field" text inputs — the truth now lives in one place, inside the mapping table itself, instead of needing to be kept in sync with it by hand. |
-| ⚙️ Advanced | **Constant Values**, **Status Sync**, **Customer-Group Promotion** | Constant Values sets fixed fields on every synced record (e.g. a `source` tag). Status Sync (optional — leave **Status Field** blank to turn it off) writes a mapped Payload status value whenever the ERPNext record's `status` matches a configured **Status Mapping** row; each row can also optionally promote the ERPNext customer to a different **Customer Group** (fetched live from ERPNext via `ERPNextCustomerGroupSelect`) — not one fixed group for the whole rule, a different group per status if needed. Both apply uniformly whether the sync came from the live webhook or a backfill. |
+| 🗺️ Field Mappings | **Field Mappings** (array), **Convert Value** |  Map ERPNext fields to Payload fields. Exactly one row must be ticked **Is Upsert Key** — that field's value is used to look up an existing Payload document before deciding whether to create or update, preventing duplicates on repeat syncs. This replaced two separate standalone "upsert ERP field"/"upsert Payload field" text inputs — the truth now lives in one place, inside the mapping table itself, instead of needing to be kept in sync with it by hand. |
+| ⚙️ Advanced | **Constant Values**, **Sync Timestamp**, **Status Sync**, **Customer-Group Promotion** | Sync Timestamp names a date field stamped on every successful upsert, updates included (see [Sync timestamp](#sync-timestamp)). Constant Values sets fixed fields on every synced record (e.g. a `source` tag). Status Sync (optional — leave **Status Field** blank to turn it off) writes a mapped Payload status value whenever the ERPNext record's `status` matches a configured **Status Mapping** row; each row can also optionally promote the ERPNext customer to a different **Customer Group** (fetched live from ERPNext via `ERPNextCustomerGroupSelect`) — not one fixed group for the whole rule, a different group per status if needed. Both apply uniformly whether the sync came from the live webhook or a backfill. |
 | 📥 Backfill | **Backfill Filter**, **Backfill On Save** | An ERPNext REST filter (JSON) controlling which existing records a backfill pulls — e.g. skip disabled records or variant templates. Backfill runs automatically after save when **Backfill On Save** is ticked; it does not affect what the live webhook receives. |
+
+### Value transforms
+
+ERPNext carries display names — never slugs, never Payload document IDs — so a verbatim copy cannot satisfy a required `slug` field or a `relationship` field. Each mapping row therefore has a **Convert Value** setting:
+
+| Transform | Use for | Example |
+|-----------|---------|---------|
+| `none` (default) | Everything else. Copies the ERPNext value unchanged. | `item_name` → `title` |
+| `slugify` | A required `slug` field with no ERPNext counterpart. | Item Group `name` "Exotic Signature Mixes" → `slug` `exotic-signature-mixes` |
+| `lookup` | A `relationship` field. Resolves the ERPNext value to a document ID by searching **Look Up In Collection** for a document whose **Match Against Field** equals it. | Item `item_group` "Cocktails" → `category` → id of the `catalogue-categories` doc named "Cocktails" |
+
+Lookups are scoped to the rule's own site whenever the looked-up collection has a `site` field, so one tenant's records can never link to another tenant's documents. A lookup that matches nothing leaves the field unset and logs a warning rather than writing a bad reference — if the field is required, the record then fails validation and is counted in `failed`.
+
+Transforms also apply to the upsert key: if the key row is `name → slug` with `slugify`, matching is done on the slug, because that is what is stored.
+
+### Sync timestamp
+
+**Sync Timestamp — Payload Field** (⚙️ Advanced) names a date field stamped on every successful upsert, **updates included**. This is when this system last pulled the record, which is deliberately different from ERPNext's own `modified` date — map that as a normal field if you want it too. Stamping on update is the point: an already-existing document is exactly where you need to see that the ERPNext link is live.
+
+### Reading backfill results
+
+`lastBackfillStats` distinguishes two outcomes that used to share one counter:
+
+- **`skipped`** — nothing was attempted: the rule has no upsert key, or the record had no value for it.
+- **`failed`** — a write was attempted and rejected, with up to five distinct reasons in `errors`. A required target field the mapping does not supply is the usual cause.
+
+A rule that cannot write a single record reports `failed`, not `skipped`.
 
 Use the **`/api/erpnext-sync?site=<site-slug>`** endpoint as the webhook target in ERPNext/Frappe. The endpoint verifies the webhook signature using the configured `webhookSecret` on the `erpnext-config` document — a site can have multiple active rules (different DocTypes, or multiple rules for the same DocType), all matching rules for the incoming DocType are applied.
 

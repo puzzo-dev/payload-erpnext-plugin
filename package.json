@@ -1,6 +1,6 @@
 {
   "name": "payload-erpnext-plugin",
-  "version": "1.8.3",
+  "version": "2.0.0",
   "description": "Payload CMS plugin for ERPNext integration. Multi-doctype form workflows, credential management, proxy endpoints, and async job forwarding.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -66,6 +66,16 @@
         "default": "./dist/components/CmsCollectionFieldSelect/index.js"
       }
     },
+    "./components/CmsLookupFieldSelect": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CmsLookupFieldSelect/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/components/CmsLookupFieldSelect/index.js"
+      }
+    },
     "./components/ERPNextConnectPanel": {
       "import": {
         "types": "./dist/index.d.ts",
@@ -89,11 +99,12 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx src/components/CompanySelect/index.tsx src/components/CmsCollectionSelect/index.tsx src/components/CmsCollectionFieldSelect/index.tsx src/components/ERPNextConnectPanel/index.tsx src/components/ERPNextCustomerGroupSelect/index.tsx --format cjs,esm --dts --clean --out-dir dist --external ioredis",
-    "dev": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx src/components/CompanySelect/index.tsx src/components/CmsCollectionSelect/index.tsx src/components/CmsCollectionFieldSelect/index.tsx src/components/ERPNextConnectPanel/index.tsx src/components/ERPNextCustomerGroupSelect/index.tsx --format cjs,esm --dts --watch --out-dir dist --external ioredis",
+    "build": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx src/components/CompanySelect/index.tsx src/components/CmsCollectionSelect/index.tsx src/components/CmsCollectionFieldSelect/index.tsx src/components/CmsLookupFieldSelect/index.tsx src/components/ERPNextConnectPanel/index.tsx src/components/ERPNextCustomerGroupSelect/index.tsx --format cjs,esm --dts --clean --out-dir dist --external ioredis",
+    "dev": "tsup src/index.ts src/components/ERPNextDocTypeSelect/index.tsx src/components/ERPNextTargetFieldSelect/index.tsx src/components/CompanySelect/index.tsx src/components/CmsCollectionSelect/index.tsx src/components/CmsCollectionFieldSelect/index.tsx src/components/CmsLookupFieldSelect/index.tsx src/components/ERPNextConnectPanel/index.tsx src/components/ERPNextCustomerGroupSelect/index.tsx --format cjs,esm --dts --watch --out-dir dist --external ioredis",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test 'src/**/*.test.ts'",
     "lint": "eslint src",

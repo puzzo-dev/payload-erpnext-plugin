@@ -174,10 +174,16 @@ export const ERPNextSyncRules: CollectionConfig = {
                             labels: { singular: 'Field Mapping', plural: 'Field Mappings' },
                             admin: { description: 'ERPNext field (left) → Payload field (right). Tick "Use as unique key" on exactly one row — that field identifies a record, so re-syncing it updates the same Payload document instead of creating a duplicate.' },
                             validate: (rows: unknown) => {
-                                const arr = (rows as Array<{ isUpsertKey?: boolean | null }> | undefined) ?? []
+                                type Row = { isUpsertKey?: boolean | null; transform?: string | null; lookup_collection?: string | null; lookup_field?: string | null }
+                                const arr = (rows as Row[] | undefined) ?? []
                                 const keyRows = arr.filter((r) => r?.isUpsertKey)
                                 if (keyRows.length === 0) return 'Exactly one row must be marked "Use as unique key".'
                                 if (keyRows.length > 1) return `Only one row can be marked "Use as unique key" — found ${keyRows.length}.`
+                                // A lookup with no collection/field silently resolves to nothing at sync
+                                // time, leaving the target field unset and failing every record on a
+                                // required relationship — catch it here instead of in the backfill log.
+                                const incomplete = arr.findIndex((r) => r?.transform === 'lookup' && (!r.lookup_collection || !r.lookup_field))
+                                if (incomplete !== -1) return `Row ${incomplete + 1} uses "Look up a related document" — it needs both a lookup collection and a field to match against.`
                                 return true
                             },
                             fields: [
@@ -223,6 +229,56 @@ export const ERPNextSyncRules: CollectionConfig = {
                                             admin: {
                                                 width: '20%',
                                                 description: 'This field identifies a record.',
+                                            },
+                                        },
+                                    ],
+                                },
+                                {
+                                    name: 'transform',
+                                    type: 'select',
+                                    defaultValue: 'none',
+                                    label: 'Convert Value',
+                                    options: [
+                                        { label: 'Copy as-is', value: 'none' },
+                                        { label: 'Convert to slug (e.g. "Exotic Mixes" → "exotic-mixes")', value: 'slugify' },
+                                        { label: 'Look up a related document (for relationship fields)', value: 'lookup' },
+                                    ],
+                                    admin: {
+                                        description: 'ERPNext carries display names, not slugs or document IDs. Use "Convert to slug" for a required slug field, and "Look up a related document" for a relationship field — copying the raw ERPNext text into either one fails validation.',
+                                    },
+                                },
+                                {
+                                    type: 'row',
+                                    admin: { condition: (_data, siblingData) => siblingData?.transform === 'lookup' },
+                                    fields: [
+                                        {
+                                            name: 'lookup_collection',
+                                            type: 'text',
+                                            label: 'Look Up In Collection',
+                                            admin: {
+                                                width: '50%',
+                                                description: 'The collection the relationship points at (e.g. catalogue-categories).',
+                                                components: {
+                                                    Field: {
+                                                        path: 'payload-erpnext-plugin/components/CmsCollectionSelect',
+                                                        exportName: 'CmsCollectionSelect',
+                                                    },
+                                                },
+                                            },
+                                        },
+                                        {
+                                            name: 'lookup_field',
+                                            type: 'text',
+                                            label: 'Match Against Field',
+                                            admin: {
+                                                width: '50%',
+                                                description: 'Field in that collection compared to the ERPNext value (e.g. name).',
+                                                components: {
+                                                    Field: {
+                                                        path: 'payload-erpnext-plugin/components/CmsLookupFieldSelect',
+                                                        exportName: 'CmsLookupFieldSelect',
+                                                    },
+                                                },
                                             },
                                         },
                                     ],
@@ -280,6 +336,20 @@ export const ERPNextSyncRules: CollectionConfig = {
                             label: 'Backfill Filter (ERPNext REST filter JSON)',
                             admin: {
                                 description: 'Controls which records the backfill pulls. Example: [["has_variants","=",0]] — only sellable items, skips variant templates. [["disabled","=",0]] — skips disabled records. Leave empty to sync everything. This does not affect the live webhook — set a matching Condition on the ERPNext Webhook for that.',
+                            },
+                        },
+                        {
+                            name: 'syncedAtField',
+                            type: 'text',
+                            label: 'Sync Timestamp — Payload Field',
+                            admin: {
+                                description: 'Payload date field stamped with the time of every successful sync, including when the record already existed and was updated (e.g. erp_last_synced_at). This is when this system last pulled the record — not ERPNext\'s own "modified" date, which you would map as a normal field. Leave blank to disable.',
+                                components: {
+                                    Field: {
+                                        path: 'payload-erpnext-plugin/components/CmsCollectionFieldSelect',
+                                        exportName: 'CmsCollectionFieldSelect',
+                                    },
+                                },
                             },
                         },
                         {
@@ -388,7 +458,10 @@ export const ERPNextSyncRules: CollectionConfig = {
                             name: 'lastBackfillStats',
                             type: 'json',
                             label: 'Last Backfill Result',
-                            admin: { readOnly: true, description: 'Counts and any errors from the most recent backfill run.' },
+                            admin: {
+                                readOnly: true,
+                                description: 'Counts from the most recent backfill. "failed" means the records were rejected by the target collection — check "errors" for the reason (a required field the mapping does not supply is the usual cause). "skipped" is different: those records had no upsert key value to match on.',
+                            },
                         },
                     ],
                 },
