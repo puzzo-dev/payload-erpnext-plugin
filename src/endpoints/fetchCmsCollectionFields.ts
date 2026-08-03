@@ -10,7 +10,7 @@ import type { Endpoint, Field } from 'payload'
  * Admin/super-admin only.
  */
 
-function collectFieldNames(fields: Field[], out: Array<{ value: string; label: string }>): void {
+function collectFieldNames(fields: Field[], out: Array<{ value: string; label: string; type: string }>): void {
     for (const field of fields) {
         switch (field.type) {
             case 'row':
@@ -20,7 +20,7 @@ function collectFieldNames(fields: Field[], out: Array<{ value: string; label: s
             case 'tabs':
                 for (const tab of field.tabs) {
                     if ('name' in tab && tab.name) {
-                        out.push({ value: tab.name, label: tab.name })
+                        out.push({ value: tab.name, label: tab.name, type: 'tab' })
                     } else {
                         collectFieldNames(tab.fields, out)
                     }
@@ -30,7 +30,11 @@ function collectFieldNames(fields: Field[], out: Array<{ value: string; label: s
                 break
             default:
                 if ('name' in field && field.name) {
-                    out.push({ value: field.name, label: field.name })
+                    // `type` is returned so callers can filter by what a field can hold.
+                    // The lookup-field picker needs it: matching an ERPNext display name
+                    // against a relationship field coerces the string to an ID and blows
+                    // up the query, so those must not be offered as match targets.
+                    out.push({ value: field.name, label: field.name, type: field.type })
                 }
         }
     }
@@ -55,7 +59,7 @@ export const fetchCmsCollectionFieldsEndpoint: Endpoint = {
             return Response.json({ error: `Collection not found: ${slug}` }, { status: 404 })
         }
 
-        const fields: Array<{ value: string; label: string }> = []
+        const fields: Array<{ value: string; label: string; type: string }> = []
         collectFieldNames(collection.fields as Field[], fields)
         // Dedupe (row/tab nesting can repeat) and sort.
         const seen = new Set<string>()

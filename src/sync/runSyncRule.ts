@@ -115,16 +115,31 @@ async function resolveLookup(
     const conditions: Where[] = [{ [field]: { equals: rawValue } }]
     if (collectionHasField(req, collection, 'site')) conditions.push({ site: { equals: siteId } })
 
-    const res = await req.payload.find({
-        collection: collection as CollectionSlug,
-        where: conditions.length > 1 ? { and: conditions } : conditions[0],
-        limit: 1,
-        depth: 0,
-        overrideAccess: true,
-        // Same reason as findExisting: a draft-only related doc must still be matchable,
-        // otherwise the lookup misses and the parent record fails to validate.
-        draft: true,
-    })
+    // A mis-picked match field is a configuration mistake, not a data problem, and it
+    // must not escape as a raw driver error repeated once per record. Matching an ERP
+    // display name against a numeric column is the common case: Payload coerces the
+    // value first, so `id = "Cocktails"` becomes `version_parent_id = NaN` and Postgres
+    // rejects the whole query. Catch it, name the collection/field/value that caused it,
+    // and fall through to "unresolved" like any other miss.
+    let res
+    try {
+        res = await req.payload.find({
+            collection: collection as CollectionSlug,
+            where: conditions.length > 1 ? { and: conditions } : conditions[0],
+            limit: 1,
+            depth: 0,
+            overrideAccess: true,
+            // Same reason as findExisting: a draft-only related doc must still be matchable,
+            // otherwise the lookup misses and the parent record fails to validate.
+            draft: true,
+        })
+    } catch (err) {
+        log?.('error', `Lookup query failed on ${collection}.${field} for value "${String(rawValue)}" — check that "Match Against Field" names a field holding this kind of value (leaving ${mapping.payload_field} unset)`, {
+            error: err instanceof Error ? err.message : String(err),
+        })
+        return undefined
+    }
+
     if (res.totalDocs === 0) {
         log?.('warn', `Lookup found no ${collection} with ${field} = "${String(rawValue)}" — leaving ${mapping.payload_field} unset`)
         return undefined

@@ -8,7 +8,19 @@ import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, Style
 interface Option {
   value: string
   label: string
+  type?: string
 }
+
+/**
+ * Field types a lookup can match an ERPNext display name against.
+ *
+ * Everything else is excluded because it cannot hold the incoming value and fails
+ * destructively rather than simply missing: Payload coerces the string to the
+ * column's type first, so matching against a `relationship` (or `id`, `upload`,
+ * `date`, `number`) turns "Cocktails" into NaN and Postgres rejects the entire
+ * query — once per record in the backfill, as a raw SQL error.
+ */
+const MATCHABLE_TYPES = new Set(['text', 'textarea', 'email', 'code', 'select', 'radio'])
 
 /**
  * Field component for a `lookup` mapping row's "Match Against Field".
@@ -51,11 +63,15 @@ export const CmsLookupFieldSelect: React.FC<{ path: string }> = ({ path }) => {
       .finally(() => setLoading(false))
   }, [lookupCollection])
 
+  // Older plugin versions of the endpoint returned no `type`; treat those as matchable
+  // rather than showing an empty list against a CMS that hasn't been upgraded yet.
   const selectOptions = useMemo(() =>
-    options.map((opt) => ({
-      label: opt.label,
-      value: opt.value,
-    })),
+    options
+      .filter((opt) => !opt.type || MATCHABLE_TYPES.has(opt.type))
+      .map((opt) => ({
+        label: opt.label,
+        value: opt.value,
+      })),
   [options])
 
   const label = 'Match Against Field'

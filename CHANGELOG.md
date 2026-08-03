@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.0.1
+
+### Fixed
+
+- **A `lookup` transform pointed at a non-text field no longer fails destructively.**
+  Payload coerces the compared value to the target column's type before querying, so
+  matching an ERPNext display name against a `relationship`, `upload`, `number`, `date`
+  or `id` field turned e.g. `"Cocktails"` into `NaN` and Postgres rejected the whole
+  query — surfacing as a raw SQL string logged once per record for an entire backfill,
+  with no indication of which setting caused it. Three layers now prevent that:
+  - `resolveLookup` catches query failures and logs which collection, field and value
+    were involved, then treats the row as unresolved like any other miss.
+  - The **Match Against Field** picker only offers field types that can hold a display
+    name (`text`, `textarea`, `email`, `code`, `select`, `radio`).
+  - Saving a rule whose lookup field cannot hold text is rejected with a message naming
+    the offending row, which also catches rows saved by an earlier version.
+
+### Changed
+
+- `GET /api/cms-collection-fields` returns a `type` alongside each field's `value` and
+  `label`, so callers can filter by what a field is able to hold. Existing consumers
+  ignoring the extra key are unaffected.
+
 ## 2.0.0
 
 ### Breaking

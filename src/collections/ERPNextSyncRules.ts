@@ -10,6 +10,35 @@ import { backfillSyncRule, type ERPNextSyncRule } from '../sync/runSyncRule'
 const SYNC_RULES_SLUG = 'erpnext-sync-rules' as unknown as CollectionSlug
 
 /**
+ * Field types a `lookup` transform can match an ERPNext display name against.
+ * Kept in sync with MATCHABLE_TYPES in components/CmsLookupFieldSelect — the picker
+ * hides the rest, this rejects them if an older picker (or the API) let one through.
+ */
+const MATCHABLE_LOOKUP_TYPES = new Set(['text', 'textarea', 'email', 'code', 'select', 'radio'])
+
+type PayloadConfigShape = { collections?: Array<{ slug: string; fields?: unknown[] }> }
+
+/** Type of a named top-level field, descending only through presentational wrappers. */
+function findTopLevelField(fields: unknown[] | undefined, name: string): string | undefined {
+    for (const f of fields ?? []) {
+        const field = f as { type?: string; name?: string; fields?: unknown[]; tabs?: Array<{ name?: string; fields?: unknown[] }> }
+        if (field.type === 'row' || field.type === 'collapsible') {
+            const found = findTopLevelField(field.fields, name)
+            if (found) return found
+        } else if (field.type === 'tabs') {
+            for (const tab of field.tabs ?? []) {
+                if (tab.name === name) return 'tab'
+                const found = findTopLevelField(tab.fields, name)
+                if (found) return found
+            }
+        } else if (field.name === name) {
+            return field.type
+        }
+    }
+    return undefined
+}
+
+/**
  * afterChange: when an active rule is saved with "backfill on save" ticked, pull all
  * existing records of its DocType from ERPNext and upsert them into the target
  * collection. Fire-and-forget (like ERPNextConfig's auto-fetch) so the save isn't
@@ -173,9 +202,10 @@ export const ERPNextSyncRules: CollectionConfig = {
                             label: 'Field Mappings',
                             labels: { singular: 'Field Mapping', plural: 'Field Mappings' },
                             admin: { description: 'ERPNext field (left) → Payload field (right). Tick "Use as unique key" on exactly one row — that field identifies a record, so re-syncing it updates the same Payload document instead of creating a duplicate.' },
-                            validate: (rows: unknown) => {
+                            validate: (rows: unknown, options: unknown) => {
                                 type Row = { isUpsertKey?: boolean | null; transform?: string | null; lookup_collection?: string | null; lookup_field?: string | null }
                                 const arr = (rows as Row[] | undefined) ?? []
+                                const payloadConfig = (options as { req?: { payload?: { config?: PayloadConfigShape } } } | undefined)?.req?.payload?.config
                                 const keyRows = arr.filter((r) => r?.isUpsertKey)
                                 if (keyRows.length === 0) return 'Exactly one row must be marked "Use as unique key".'
                                 if (keyRows.length > 1) return `Only one row can be marked "Use as unique key" — found ${keyRows.length}.`
@@ -184,6 +214,22 @@ export const ERPNextSyncRules: CollectionConfig = {
                                 // required relationship — catch it here instead of in the backfill log.
                                 const incomplete = arr.findIndex((r) => r?.transform === 'lookup' && (!r.lookup_collection || !r.lookup_field))
                                 if (incomplete !== -1) return `Row ${incomplete + 1} uses "Look up a related document" — it needs both a lookup collection and a field to match against.`
+                                // Server-side safety net for the lookup-field picker. An ERPNext
+                                // display name can only be matched against a field that holds
+                                // text; against a relationship/upload/number/date/id, Payload
+                                // coerces the string to that column's type, yielding NaN and a
+                                // rejected query for every record — a raw SQL error rather than
+                                // a miss. Catch it at save time, and catch rows saved by an
+                                // older version of the plugin whose picker still offered them.
+                                const badType = arr.findIndex((r) => {
+                                    if (r?.transform !== 'lookup' || !r.lookup_collection || !r.lookup_field) return false
+                                    if (r.lookup_field === 'id') return true
+                                    const target = payloadConfig?.collections?.find((c) => c.slug === r.lookup_collection)
+                                    const field = findTopLevelField(target?.fields as unknown[] | undefined, r.lookup_field)
+                                    // Unknown field (custom collection, not yet loaded) → don't block the save.
+                                    return field ? !MATCHABLE_LOOKUP_TYPES.has(field) : false
+                                })
+                                if (badType !== -1) return `Row ${badType + 1} matches against a field that cannot hold an ERPNext display name. Pick a text field such as "name" or "title".`
                                 return true
                             },
                             fields: [
