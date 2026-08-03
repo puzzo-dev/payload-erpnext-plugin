@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useField } from '@payloadcms/ui'
 
-import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput } from '../shared'
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput, fieldChrome, type ClientFieldConfig } from '../shared'
 
 interface Option {
   value: string
@@ -33,7 +33,8 @@ const MATCHABLE_TYPES = new Set(['text', 'textarea', 'email', 'code', 'select', 
  * `field_mappings.2.lookup_field` → `field_mappings.2.lookup_collection` — which keeps
  * it working at any row index without needing the row index passed in.
  */
-export const CmsLookupFieldSelect: React.FC<{ path: string }> = ({ path }) => {
+export const CmsLookupFieldSelect: React.FC<{ path: string; field?: ClientFieldConfig }> = ({ path, field }) => {
+  const { label, description } = fieldChrome(field, 'Match Against Field', 'Field in the lookup collection compared to the ERPNext value (e.g. name).')
   const { value, setValue } = useField<string>({ path })
   const siblingPath = useMemo(() => {
     const segments = path.split('.')
@@ -74,8 +75,6 @@ export const CmsLookupFieldSelect: React.FC<{ path: string }> = ({ path }) => {
       })),
   [options])
 
-  const label = 'Match Against Field'
-  const description = 'Field in the lookup collection compared to the ERPNext value (e.g. name).'
 
   if (!lookupCollection) {
     return (

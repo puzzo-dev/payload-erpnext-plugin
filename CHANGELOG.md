@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.2
+
+### Fixed
+
+- **`CmsCollectionSelect` showed the wrong label when reused for a lookup.** It
+  hardcoded "Target Collection — Payload collection that incoming ERPNext data will sync
+  into", so a Field Mapping row's **Look Up In Collection** rendered with that text. An
+  Item rule with a lookup into `catalogue-categories` therefore read as though items
+  synced *into* the category collection — the exact opposite of what the setting does.
+  2.0.1 fixed this for `CmsCollectionFieldSelect` but missed its sibling.
+- All three collection/field pickers now take label and description from the field they
+  are attached to, via a shared `fieldChrome` helper, with the previous hardcoded strings
+  as fallbacks.
+
 ## 2.0.1
 
 ### Fixed

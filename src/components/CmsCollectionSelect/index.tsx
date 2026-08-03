@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useField, ReactSelect } from '@payloadcms/ui'
 
-import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledTextInput } from '../shared'
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledTextInput, fieldChrome, type ClientFieldConfig } from '../shared'
 
 interface Option {
     value: string
@@ -19,7 +19,11 @@ interface Option {
  * (not read-once-on-mount), so picking a site after the form first loads
  * actually re-fetches instead of leaving a stale "select a site" message.
  */
-export const CmsCollectionSelect: React.FC<{ path: string }> = ({ path }) => {
+export const CmsCollectionSelect: React.FC<{ path: string; field?: ClientFieldConfig }> = ({ path, field }) => {
+    // Reused for the rule's own targetCollection AND for a lookup row's
+    // lookup_collection, which mean opposite things — so the label must come from
+    // whichever field it is attached to, not from this component.
+    const { label, description } = fieldChrome(field, 'Target Collection', 'Payload collection that incoming ERPNext data will sync into.')
     const { value, setValue } = useField<string>({ path })
     const { value: siteValue } = useField<string | number | { id: string | number } | null>({ path: 'site' })
     const [local, setLocal] = useState<Option[]>([])
@@ -71,14 +75,14 @@ export const CmsCollectionSelect: React.FC<{ path: string }> = ({ path }) => {
 
     if (!siteId) {
         return (
-            <FieldWrapper path={path} label="Target Collection" description="Payload collection that incoming ERPNext data will sync into.">
+            <FieldWrapper path={path} label={label} description={description}>
                 <EmptyState message="Select a site first." />
             </FieldWrapper>
         )
     }
 
     return (
-        <FieldWrapper path={path} label="Target Collection" description="Payload collection that incoming ERPNext data will sync into.">
+        <FieldWrapper path={path} label={label} description={description}>
             {loading && <LoadingState message="Loading collections…" />}
             {!loading && hasOptions && (
                 <ReactSelect

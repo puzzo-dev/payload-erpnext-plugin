@@ -52,6 +52,41 @@ export interface SelectOption {
     value: string
 }
 
+/** The subset of Payload's client field config these components read. */
+export interface ClientFieldConfig {
+    label?: string | Record<string, string>
+    admin?: { description?: string | Record<string, string> }
+}
+
+/** Payload localises label/description as {locale: string}; take the string form. */
+function plainText(value: string | Record<string, string> | undefined): string | undefined {
+    if (typeof value === 'string') return value
+    if (value && typeof value === 'object') return Object.values(value)[0]
+    return undefined
+}
+
+/**
+ * A field component's label and description, taken from the field's OWN config with
+ * a generic fallback.
+ *
+ * These used to be hardcoded inside each component, so every use of a component
+ * rendered identically no matter what the field was actually for. That is actively
+ * misleading once a component is reused: `lookup_collection` inside a Field Mapping
+ * row was displayed as "Target Collection — Payload collection that incoming ERPNext
+ * data will sync into", making an Item rule look like it synced into the category
+ * collection it was merely looking values up in.
+ */
+export function fieldChrome(
+    field: ClientFieldConfig | undefined,
+    fallbackLabel: string,
+    fallbackDescription: string,
+): { label: string; description: string } {
+    return {
+        label: plainText(field?.label) || fallbackLabel,
+        description: plainText(field?.admin?.description) || fallbackDescription,
+    }
+}
+
 interface FieldWrapperProps {
     path: string
     label?: string

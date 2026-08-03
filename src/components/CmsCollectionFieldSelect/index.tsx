@@ -3,24 +3,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useField } from '@payloadcms/ui'
 
-import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput } from '../shared'
+import { FieldWrapper, LoadingState, EmptyState, ErrorState, StyledSelect, StyledTextInput, fieldChrome, type ClientFieldConfig } from '../shared'
 
 interface Option {
   value: string
   label: string
-}
-
-/** The subset of Payload's client field config this component reads. */
-interface ClientFieldConfig {
-  label?: string | Record<string, string>
-  admin?: { description?: string | Record<string, string> }
-}
-
-/** Payload localises label/description as {locale: string}; take the string form. */
-function plainText(value: string | Record<string, string> | undefined): string | undefined {
-  if (typeof value === 'string') return value
-  if (value && typeof value === 'object') return Object.values(value)[0]
-  return undefined
 }
 
 /**
@@ -38,8 +25,7 @@ function plainText(value: string | Record<string, string> | undefined): string |
  * pickers, with no way to tell which one you were filling in.
  */
 export const CmsCollectionFieldSelect: React.FC<{ path: string; field?: ClientFieldConfig }> = ({ path, field }) => {
-  const label = plainText(field?.label) || 'Payload Field'
-  const description = plainText(field?.admin?.description) || 'Field on the target Payload collection to map data into.'
+  const { label, description } = fieldChrome(field, 'Payload Field', 'Field on the target Payload collection to map data into.')
   const { value, setValue } = useField<string>({ path })
   const { value: targetCollection } = useField<string | null>({ path: 'targetCollection' })
   const [options, setOptions] = useState<Option[]>([])
