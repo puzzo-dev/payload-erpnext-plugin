@@ -17,6 +17,12 @@
   - Saving a rule whose lookup field cannot hold text is rejected with a message naming
     the offending row, which also catches rows saved by an earlier version.
 
+- **Field pickers show their own label and description again.** `CmsCollectionFieldSelect`
+  hardcoded "Payload Field" and one generic description, so every use rendered
+  identically. On the Advanced tab that left **Sync Timestamp** and **Status Sync** as
+  two indistinguishable "Payload Field" pickers with no way to tell which was which.
+  Both now come from the field's own config, falling back to the generic pair.
+
 ### Changed
 
 - `GET /api/cms-collection-fields` returns a `type` alongside each field's `value` and
