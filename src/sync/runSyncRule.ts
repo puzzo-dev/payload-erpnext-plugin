@@ -2,6 +2,9 @@ import type { CollectionSlug, Payload, PayloadRequest, Where } from 'payload'
 import type { ERPNextCredentials, LogFn } from '../types'
 import { authHeaders } from '../endpoints/erpnextProxy'
 import {
+    chooseMatchField,
+    describeRelationship,
+    findFieldConfig,
     coerceConstant,
     erpFetchFields,
     getUpsertKeyMapping,
@@ -78,6 +81,30 @@ const SYNC_RULES_SLUG = 'erpnext-sync-rules' as unknown as CollectionSlug
 /** Timeout for backfill pulls from ERPNext. */
 const BACKFILL_TIMEOUT_MS = 30000
 
+/**
+ * Work out what a `link` transform should search, from Payload's config alone.
+ *
+ * The rule author picks only the Payload field; everything else is already declared.
+ * Returns a reason instead of a target when the config cannot be trusted, so the
+ * caller can log something actionable rather than issuing a doomed query.
+ */
+function resolveLinkTarget(
+    req: PayloadRequest,
+    rule: ERPNextSyncRule,
+    mapping: ERPNextFieldMapping,
+): { collection: string; field: string; hasMany: boolean } | { reason: string } {
+    const targetConfig = req.payload.collections?.[rule.targetCollection]?.config
+    const rel = describeRelationship(targetConfig?.fields as unknown[] | undefined, mapping.payload_field ?? '', rule.targetCollection)
+    if ('reason' in rel) return rel
+
+    const relatedConfig = req.payload.collections?.[rel.collection]?.config
+    const useAsTitle = (relatedConfig?.admin as { useAsTitle?: string } | undefined)?.useAsTitle
+    const match = chooseMatchField(relatedConfig?.fields as unknown[] | undefined, useAsTitle, mapping.lookup_field, rel.collection)
+    if ('reason' in match) return match
+
+    return { collection: rel.collection, field: match.field, hasMany: rel.hasMany }
+}
+
 /** Does a collection declare a top-level field with this name? */
 function collectionHasField(req: PayloadRequest, slug: string, fieldName: string): boolean {
     const config = req.payload.collections?.[slug]?.config
@@ -100,18 +127,15 @@ function collectionHasField(req: PayloadRequest, slug: string, fieldName: string
  * than writing a bad reference, and Payload's own required-field validation then
  * reports it (surfacing as a skipped record with a readable error).
  */
-async function resolveLookup(
+async function resolveRelated(
     req: PayloadRequest,
     mapping: ERPNextFieldMapping,
+    target: { collection: string; field: string; hasMany: boolean },
     rawValue: unknown,
     siteId: string | number,
     log?: LogFn,
 ): Promise<unknown> {
-    const { lookup_collection: collection, lookup_field: field } = mapping
-    if (!collection || !field) {
-        log?.('warn', 'Lookup transform missing collection/field — leaving unset', { payload_field: mapping.payload_field })
-        return undefined
-    }
+    const { collection, field } = target
     const conditions: Where[] = [{ [field]: { equals: rawValue } }]
     if (collectionHasField(req, collection, 'site')) conditions.push({ site: { equals: siteId } })
 
@@ -144,7 +168,10 @@ async function resolveLookup(
         log?.('warn', `Lookup found no ${collection} with ${field} = "${String(rawValue)}" — leaving ${mapping.payload_field} unset`)
         return undefined
     }
-    return (res.docs[0] as { id: string | number }).id
+    const id = (res.docs[0] as { id: string | number }).id
+    // A hasMany relationship stores an array. One ERPNext Link field yields one target,
+    // so wrap it rather than writing a bare id the field will reject.
+    return target.hasMany ? [id] : id
 }
 
 /**
@@ -158,13 +185,39 @@ export async function applyMappingTransform(
     rawValue: unknown,
     siteId: string | number,
     log?: LogFn,
+    // Appended rather than inserted next to `mapping`, where it belongs, so the 2.0.x
+    // signature keeps working. Only the `link` transform needs it — it reads
+    // rule.targetCollection to find the field config declaring relationTo.
+    rule?: ERPNextSyncRule,
 ): Promise<unknown> {
     if (rawValue === undefined || rawValue === null || rawValue === '') return rawValue
     switch (mapping.transform) {
         case 'slugify':
             return slugify(String(rawValue))
-        case 'lookup':
-            return resolveLookup(req, mapping, rawValue, siteId, log)
+        case 'link': {
+            if (!rule) {
+                log?.('error', 'Link transform needs the sync rule to resolve the relationship — leaving unset', { payload_field: mapping.payload_field })
+                return undefined
+            }
+            // Everything the query needs is already declared in Payload's config.
+            const target = resolveLinkTarget(req, rule, mapping)
+            if ('reason' in target) {
+                log?.('error', `Cannot link ${rule.targetCollection}.${mapping.payload_field}: ${target.reason} (leaving it unset)`)
+                return undefined
+            }
+            return resolveRelated(req, mapping, target, rawValue, siteId, log)
+        }
+        case 'lookup': {
+            const { lookup_collection: collection, lookup_field: field } = mapping
+            if (!collection || !field) {
+                log?.('warn', 'Lookup transform missing collection/field — leaving unset', { payload_field: mapping.payload_field })
+                return undefined
+            }
+            const hasMany = Boolean(
+                rule && findFieldConfig(req.payload.collections?.[rule.targetCollection]?.config?.fields as unknown[] | undefined, mapping.payload_field ?? '')?.hasMany,
+            )
+            return resolveRelated(req, mapping, { collection, field, hasMany }, rawValue, siteId, log)
+        }
         default:
             return rawValue
     }
@@ -186,7 +239,7 @@ export async function mapErpRecord(
     // which one it is), so this loop already copies it — no separate assignment needed.
     for (const m of rule.field_mappings ?? []) {
         if (m.erp_field && m.payload_field) {
-            const value = await applyMappingTransform(req, m, erpRecord[m.erp_field], siteId, log)
+            const value = await applyMappingTransform(req, m, erpRecord[m.erp_field], siteId, log, rule)
             // An unresolved lookup must not write `undefined` over an existing value on
             // update — omit the key entirely and leave whatever the document already has.
             if (value === undefined && m.transform === 'lookup') continue
@@ -296,7 +349,7 @@ export async function upsertErpRecord(
         log?.('warn', 'No field mapping marked as the unique key — skipping', { doctype: rule.doctype })
         return { action: 'skipped' }
     }
-    const keyValue = await applyMappingTransform(req, keyMapping, erpRecord[keyMapping.erp_field], siteId, log)
+    const keyValue = await applyMappingTransform(req, keyMapping, erpRecord[keyMapping.erp_field], siteId, log, rule)
     if (keyValue === undefined || keyValue === null || keyValue === '') {
         log?.('warn', `Record missing upsert key "${keyMapping.erp_field}" — skipping`, { doctype: rule.doctype })
         return { action: 'skipped' }
@@ -383,7 +436,7 @@ export async function deleteErpRecord(
     if (!keyMapping) return { action: 'skipped' }
     // Same transform as the upsert path — the stored value is the transformed one, so
     // an un-transformed key would fail to find the document and silently skip the delete.
-    const keyValue = await applyMappingTransform(req, keyMapping, erpRecord[keyMapping.erp_field], siteId, log)
+    const keyValue = await applyMappingTransform(req, keyMapping, erpRecord[keyMapping.erp_field], siteId, log, rule)
     if (keyValue === undefined || keyValue === null || keyValue === '') return { action: 'skipped' }
 
     const existing = await findExisting(req, rule, keyMapping, keyValue, siteId)

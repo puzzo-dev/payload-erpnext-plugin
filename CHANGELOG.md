@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **`link` transform — relationships resolve themselves.** Pick the Payload field and
+  nothing else. The plugin reads `relationTo` off the relationship field to learn which
+  collection to search, and that collection's `admin.useAsTitle` to learn which field
+  holds the human-readable identifier — which is exactly what a Frappe Link field
+  stores. Both were already declared in Payload's config; `lookup` merely asked an
+  operator to restate them, which is how a rule ends up matching against a relationship
+  field and failing every record.
+
+  ```
+  before (lookup)                        after (link)
+    Payload Field:  category               Payload Field: category
+    Look Up In:     catalogue-categories     (from relationTo)
+    Match Against:  name                     (from useAsTitle)
+  ```
+
+  `hasMany` relationships receive an array. An optional **Match Against Field** override
+  remains for when the ERPNext value lives somewhere other than the title field.
+
+  Cases `link` refuses rather than guesses, each naming the rule and field in the log:
+  a polymorphic `relationTo`, a non-relationship target, a collection with no
+  `useAsTitle`, and a `useAsTitle` resolving to `id` or any non-text field — Payload
+  defaults `useAsTitle` to `id`, which is the very failure this transform prevents.
+
+### Changed
+
+- `lookup` is retained unchanged, for polymorphic relationships and for matching on a
+  field other than the title. Existing rules are untouched — `link` is opt-in.
+
+### Migration required
+
+- `erpnext_sync_rules_field_mappings.transform` gains the enum value `link`. See
+  `payload-cms/src/migrations/20260803_180000_erpnext_sync_rules_link_transform.ts`.
+  `ALTER TYPE ... ADD VALUE` is transaction-safe on Postgres 12+ as long as the value
+  is not used in the same transaction, which it is not.
+
 ## 2.0.2
 
 ### Fixed

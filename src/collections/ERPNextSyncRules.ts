@@ -287,15 +287,16 @@ export const ERPNextSyncRules: CollectionConfig = {
                                     options: [
                                         { label: 'Copy as-is', value: 'none' },
                                         { label: 'Convert to slug (e.g. "Exotic Mixes" → "exotic-mixes")', value: 'slugify' },
-                                        { label: 'Look up a related document (for relationship fields)', value: 'lookup' },
+                                        { label: 'Link to the related document (for relationship fields)', value: 'link' },
+                                        { label: 'Link, choosing the collection and field myself', value: 'lookup' },
                                     ],
                                     admin: {
-                                        description: 'ERPNext carries display names, not slugs or document IDs. Use "Convert to slug" for a required slug field, and "Look up a related document" for a relationship field — copying the raw ERPNext text into either one fails validation.',
+                                        description: 'ERPNext carries display names, not slugs or document IDs — copying either one into a slug or relationship field fails validation. "Convert to slug" derives a slug. "Link to the related document" resolves the ERPNext name to the right document on its own, using the relationship\'s own target collection and that collection\'s title field; pick the manual variant only for polymorphic relationships or to match on something other than the title.',
                                     },
                                 },
                                 {
                                     type: 'row',
-                                    admin: { condition: (_data, siblingData) => siblingData?.transform === 'lookup' },
+                                    admin: { condition: (_data, siblingData) => siblingData?.transform === 'lookup' || siblingData?.transform === 'link' },
                                     fields: [
                                         {
                                             name: 'lookup_collection',
@@ -304,6 +305,7 @@ export const ERPNextSyncRules: CollectionConfig = {
                                             admin: {
                                                 width: '50%',
                                                 description: 'The collection the relationship points at (e.g. catalogue-categories).',
+                                                condition: (_data, siblingData) => siblingData?.transform === 'lookup',
                                                 components: {
                                                     Field: {
                                                         path: 'payload-erpnext-plugin/components/CmsCollectionSelect',
@@ -318,7 +320,7 @@ export const ERPNextSyncRules: CollectionConfig = {
                                             label: 'Match Against Field',
                                             admin: {
                                                 width: '50%',
-                                                description: 'Field in that collection compared to the ERPNext value (e.g. name).',
+                                                description: 'Field in that collection compared to the ERPNext value (e.g. name). With "Link to the related document" this is optional — leave it blank to use the collection\'s own title field, and set it only when the ERPNext value lives somewhere else.',
                                                 components: {
                                                     Field: {
                                                         path: 'payload-erpnext-plugin/components/CmsLookupFieldSelect',

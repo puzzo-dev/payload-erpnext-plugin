@@ -206,7 +206,26 @@ ERPNext carries display names — never slugs, never Payload document IDs — so
 |-----------|---------|---------|
 | `none` (default) | Everything else. Copies the ERPNext value unchanged. | `item_name` → `title` |
 | `slugify` | A required `slug` field with no ERPNext counterpart. | Item Group `name` "Exotic Signature Mixes" → `slug` `exotic-signature-mixes` |
-| `lookup` | A `relationship` field. Resolves the ERPNext value to a document ID by searching **Look Up In Collection** for a document whose **Match Against Field** equals it. | Item `item_group` "Cocktails" → `category` → id of the `catalogue-categories` doc named "Cocktails" |
+| `link` | A `relationship` field. **Prefer this.** Pick only the Payload field — the collection comes from the field's `relationTo` and the match field from that collection's `admin.useAsTitle`. | Item `item_group` "Cocktails" → `category` → id of the `catalogue-categories` doc named "Cocktails" |
+| `lookup` | The manual form of `link`: name the collection and field yourself. For polymorphic relationships, or to match on a field other than the title. | as above, with **Look Up In Collection** and **Match Against Field** typed in |
+
+### Why `link` exists
+
+ERPNext and Payload disagree about what a foreign key is. Frappe has no numeric IDs — a
+document's primary key *is* its docname — so a Link field stores `"Cocktails"`. Payload
+stores an integer row ID and keeps the name in a separate column. Copying one into the
+other is always invalid, so the value has to be resolved at sync time.
+
+Both settings a resolution needs are already in Payload's config: `relationTo` on the
+relationship field, and `useAsTitle` on the collection it points at. `link` reads them.
+`lookup` asks an operator to retype them, which is how a rule ends up matching against a
+relationship field — Payload coerces the string to an ID, producing `NaN`, and Postgres
+rejects the query for every record in the backfill.
+
+`link` refuses rather than guesses when the config is ambiguous or unusable: a
+polymorphic `relationTo`, a target that is not a relationship, a collection with no
+`useAsTitle`, or a `useAsTitle` that resolves to `id` or any non-text field. Each names
+the rule and field in the log.
 
 Lookups are scoped to the rule's own site whenever the looked-up collection has a `site` field, so one tenant's records can never link to another tenant's documents. A lookup that matches nothing leaves the field unset and logs a warning rather than writing a bad reference — if the field is required, the record then fails validation and is counted in `failed`.
 

@@ -16,12 +16,21 @@
  *               fields have no ERPNext counterpart — Frappe doctypes carry a display
  *               name only, so an un-transformed map left `slug` empty and every create
  *               failed validation.
- *  - `lookup`   resolve the ERP value (a display name such as an Item Group's
- *               "Cocktails") to the ID of a document in another Payload collection, so
- *               it can populate a `relationship` field. Copying the raw string into a
- *               relationship field is always invalid — the field wants an ID.
+ *  - `link`     the same resolution as `lookup`, but with both settings DERIVED from
+ *               Payload's own config instead of typed in: the target collection comes
+ *               from the relationship field's `relationTo`, and the field to match on
+ *               from that collection's `admin.useAsTitle`. Prefer this. Asking an
+ *               operator to restate what Payload already declares is how a rule ends
+ *               up matching against `parent` — a value that cannot ever resolve.
+ *  - `lookup`   the manual form: name the collection and field yourself. Kept for
+ *               polymorphic relationships and for matching on something other than
+ *               the title field.
+ *
+ * Both link forms exist because copying a raw ERP string into a `relationship` field
+ * is always invalid — the field wants a document ID, and Frappe's foreign key is the
+ * docname.
  */
-export type MappingTransform = 'none' | 'slugify' | 'lookup'
+export type MappingTransform = 'none' | 'slugify' | 'link' | 'lookup'
 
 export interface ERPNextFieldMapping {
     erp_field?: string | null
@@ -116,4 +125,89 @@ export function erpFetchFields(rule: ERPNextSyncRule): string[] {
         if (m.erp_field) fields.add(m.erp_field)
     }
     return [...fields]
+}
+
+/**
+ * Field types an ERPNext display name can be matched against.
+ *
+ * Anything else fails destructively rather than simply missing: Payload coerces the
+ * string to the column's type before querying, so matching against a relationship,
+ * id, number or date turns "Cocktails" into NaN and Postgres rejects the whole query.
+ */
+export const MATCHABLE_TYPES = new Set(['text', 'textarea', 'email', 'code', 'select', 'radio'])
+
+export interface FieldConfigShape {
+    type?: string
+    name?: string
+    relationTo?: string | string[]
+    hasMany?: boolean
+    fields?: unknown[]
+    tabs?: Array<{ name?: string; fields?: unknown[] }>
+}
+
+/** A named top-level field's config, descending only through presentational wrappers. */
+export function findFieldConfig(fields: unknown[] | undefined, name: string): FieldConfigShape | undefined {
+    for (const f of fields ?? []) {
+        const field = f as FieldConfigShape
+        if (field.type === 'row' || field.type === 'collapsible') {
+            const found = findFieldConfig(field.fields, name)
+            if (found) return found
+        } else if (field.type === 'tabs') {
+            for (const tab of field.tabs ?? []) {
+                const found = findFieldConfig(tab.fields, name)
+                if (found) return found
+            }
+        } else if (field.name === name) {
+            return field
+        }
+    }
+    return undefined
+}
+
+/**
+ * Which collection a `link` transform should search, read from the relationship field
+ * itself. `relationTo` is Payload's own declaration of the link target, so there is
+ * nothing for an operator to restate — and nothing for them to get wrong.
+ */
+export function describeRelationship(
+    targetFields: unknown[] | undefined,
+    payloadField: string,
+    targetCollection: string,
+): { collection: string; hasMany: boolean } | { reason: string } {
+    const fieldConfig = findFieldConfig(targetFields, payloadField)
+    if (!fieldConfig) return { reason: `"${payloadField}" is not a field on ${targetCollection}` }
+    if (fieldConfig.type !== 'relationship') {
+        return { reason: `"${payloadField}" is a ${fieldConfig.type} field, not a relationship — use "Copy as-is" or "Convert to slug" instead` }
+    }
+    if (Array.isArray(fieldConfig.relationTo)) {
+        return { reason: `"${payloadField}" is polymorphic (${fieldConfig.relationTo.join(', ')}) — use the manual variant and name the collection explicitly` }
+    }
+    if (!fieldConfig.relationTo) return { reason: `"${payloadField}" declares no relationTo` }
+    return { collection: fieldConfig.relationTo, hasMany: Boolean(fieldConfig.hasMany) }
+}
+
+/**
+ * Which field of the related collection to match on: an explicit override if given,
+ * otherwise `admin.useAsTitle` — Payload's own answer to "what identifies this document
+ * to a human", which is exactly what a Frappe Link field stores.
+ *
+ * useAsTitle falls back to `id` when a collection does not set it, and an id match is
+ * the NaN failure this transform exists to prevent, so the choice is always verified
+ * against the actual field config rather than trusted.
+ */
+export function chooseMatchField(
+    relatedFields: unknown[] | undefined,
+    useAsTitle: string | undefined,
+    override: string | null | undefined,
+    collection: string,
+): { field: string } | { reason: string } {
+    const candidate = override || useAsTitle
+    if (!candidate) {
+        return { reason: `${collection} sets no admin.useAsTitle — set a "Match Against Field" override on this row` }
+    }
+    const candidateConfig = findFieldConfig(relatedFields, candidate)
+    if (candidate === 'id' || !candidateConfig || !MATCHABLE_TYPES.has(candidateConfig.type ?? '')) {
+        return { reason: `${collection}.${candidate} cannot hold an ERPNext display name — set a "Match Against Field" override naming a text field` }
+    }
+    return { field: candidate }
 }

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { slugify, getUpsertKeyMapping, erpFetchFields, type ERPNextSyncRule } from './transforms'
+import { slugify, getUpsertKeyMapping, erpFetchFields, describeRelationship, chooseMatchField, type ERPNextSyncRule } from './transforms'
 
 describe('slugify', () => {
     it('lowercases and hyphenates a display name', () => {
@@ -65,5 +65,87 @@ describe('erpFetchFields', () => {
             ],
         }
         assert.deepEqual(erpFetchFields(rule), ['item_name', 'item_group'])
+    })
+})
+
+describe('describeRelationship', () => {
+    // Mirrors payload-cms: catalogue-items.category is a required relationship to
+    // catalogue-categories, which is exactly what `link` reads instead of asking.
+    const catalogueItemFields = [
+        { name: 'title', type: 'text' },
+        { name: 'category', type: 'relationship', relationTo: 'catalogue-categories', required: true },
+        { type: 'row', fields: [{ name: 'price', type: 'number' }] },
+    ]
+
+    it('derives the collection from relationTo', () => {
+        assert.deepEqual(
+            describeRelationship(catalogueItemFields, 'category', 'catalogue-items'),
+            { collection: 'catalogue-categories', hasMany: false },
+        )
+    })
+
+    it('finds a relationship nested inside a presentational row', () => {
+        const fields = [{ type: 'row', fields: [{ name: 'brand', type: 'relationship', relationTo: 'brands' }] }]
+        assert.deepEqual(describeRelationship(fields, 'brand', 'x'), { collection: 'brands', hasMany: false })
+    })
+
+    it('reports hasMany so the caller writes an array', () => {
+        const fields = [{ name: 'tags', type: 'relationship', relationTo: 'tags', hasMany: true }]
+        assert.deepEqual(describeRelationship(fields, 'tags', 'x'), { collection: 'tags', hasMany: true })
+    })
+
+    it('refuses a non-relationship field instead of guessing', () => {
+        const result = describeRelationship(catalogueItemFields, 'title', 'catalogue-items')
+        assert.ok('reason' in result && result.reason.includes('not a relationship'))
+    })
+
+    it('refuses a polymorphic relationship, which has no single target', () => {
+        const fields = [{ name: 'owner', type: 'relationship', relationTo: ['users', 'teams'] }]
+        const result = describeRelationship(fields, 'owner', 'x')
+        assert.ok('reason' in result && result.reason.includes('polymorphic'))
+    })
+
+    it('reports an unknown field rather than resolving nothing', () => {
+        const result = describeRelationship(catalogueItemFields, 'nope', 'catalogue-items')
+        assert.ok('reason' in result && result.reason.includes('not a field'))
+    })
+})
+
+describe('chooseMatchField', () => {
+    const categoryFields = [
+        { name: 'name', type: 'text' },
+        { name: 'slug', type: 'text' },
+        { name: 'parent', type: 'relationship', relationTo: 'catalogue-categories' },
+        { name: 'sort_order', type: 'number' },
+    ]
+
+    it('uses useAsTitle when no override is given', () => {
+        assert.deepEqual(chooseMatchField(categoryFields, 'name', null, 'catalogue-categories'), { field: 'name' })
+    })
+
+    it('lets an explicit override win over useAsTitle', () => {
+        assert.deepEqual(chooseMatchField(categoryFields, 'name', 'slug', 'catalogue-categories'), { field: 'slug' })
+    })
+
+    // The exact production failure: matching against `parent` coerced "Cocktails" to
+    // NaN and Postgres rejected the query for all 17 records.
+    it('refuses a relationship field', () => {
+        const result = chooseMatchField(categoryFields, 'name', 'parent', 'catalogue-categories')
+        assert.ok('reason' in result && result.reason.includes('cannot hold an ERPNext display name'))
+    })
+
+    it('refuses id, which is what useAsTitle silently defaults to', () => {
+        const result = chooseMatchField(categoryFields, 'id', null, 'catalogue-categories')
+        assert.ok('reason' in result && result.reason.includes('cannot hold an ERPNext display name'))
+    })
+
+    it('refuses a numeric field', () => {
+        const result = chooseMatchField(categoryFields, 'name', 'sort_order', 'catalogue-categories')
+        assert.ok('reason' in result && result.reason.includes('cannot hold an ERPNext display name'))
+    })
+
+    it('asks for an override when the collection sets no useAsTitle', () => {
+        const result = chooseMatchField(categoryFields, undefined, null, 'catalogue-categories')
+        assert.ok('reason' in result && result.reason.includes('no admin.useAsTitle'))
     })
 })
