@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.4.0
+
+### Added
+
+- **Source values in a Trigger ERP Action step are now picked, not typed.** The target
+  side of the mapping already had a picker; the source side was a bare text input, so
+  Payload field names had to be recalled and typed as `{{doc.whatever}}`, with a typo
+  surfacing only later at run time as an unresolved variable.
+
+  Options come from the workflow's own trigger collections — the root-level `collections`
+  field, read reactively so choosing a collection repopulates the list immediately — via
+  `/api/cms-collection-fields`, an endpoint this plugin already ships. Nothing has to be
+  injected by the host.
+
+  A free-text input sits alongside the select deliberately: a source is often a literal,
+  or a variable produced by an earlier step (`{{erp_name}}`, `{{created_id}}`), neither
+  of which the list can know about.
+
 ## 2.3.0
 
 ### Added

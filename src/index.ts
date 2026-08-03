@@ -205,7 +205,11 @@ export function erpnextPlugin(options: ERPNextPluginOptions = {}): Plugin {
                                             name: 'source_field',
                                             type: 'text',
                                             required: true,
-                                            admin: { description: 'Static value or variable (e.g. {{doc.status}})' }
+                                            label: 'Source Value',
+                                            admin: {
+                                                description: 'A field from the workflow\'s trigger collection, a literal value, or a variable from an earlier step (e.g. {{erp_name}}).',
+                                                components: { Field: 'payload-erpnext-plugin/components/WorkflowSourceSelect' },
+                                            }
                                         }
                                     ]
                                 },
