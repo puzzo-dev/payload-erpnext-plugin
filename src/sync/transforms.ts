@@ -46,6 +46,12 @@ export interface ERPNextFieldMapping {
     lookup_collection?: string | null
     /** `lookup` only: field in that collection the ERP value is matched against. */
     lookup_field?: string | null
+    /**
+     * Create the related document when the link resolves to nothing, instead of
+     * leaving the field unset. Off by default: creating records nobody asked for is
+     * how a catalogue ends up holding ERP scaffolding like "All Item Groups".
+     */
+    create_if_missing?: boolean | null
 }
 
 /** A row from the `erpnext-sync-rules` collection (shape only — not in generated types). */
@@ -265,4 +271,35 @@ export function chooseMatchField(
         return { reason: `${collection}.${candidate} cannot hold an ERPNext display name — set a "Match Against Field" override naming a text field` }
     }
     return { field: candidate }
+}
+
+/**
+ * The document a `create_if_missing` link should insert when its target is absent.
+ *
+ * Only fields that can be derived with certainty are populated: the field being
+ * matched on (which is the ERPNext value by definition), the tenant's site, and a
+ * required `slug`, since a slug is always a function of the name and is the one
+ * companion field that would otherwise fail validation every time.
+ *
+ * Anything else the collection requires is left to Payload to reject — deliberately.
+ * Inventing values for arbitrary required fields would produce records that satisfy
+ * validation while meaning nothing, and the resulting error names the field so an
+ * operator can add a Constant Value for it.
+ */
+export function buildRelatedDocData(
+    relatedFields: unknown[] | undefined,
+    matchField: string,
+    rawValue: string,
+    siteId: string | number,
+): Record<string, unknown> {
+    const data: Record<string, unknown> = { [matchField]: rawValue }
+
+    const slugField = findFieldConfig(relatedFields, 'slug')
+    if (slugField && matchField !== 'slug' && MATCHABLE_TYPES.has(slugField.type ?? '')) {
+        data.slug = slugify(rawValue)
+    }
+    if (findFieldConfig(relatedFields, 'site')) {
+        data.site = siteId
+    }
+    return data
 }

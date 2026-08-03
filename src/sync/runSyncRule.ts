@@ -2,6 +2,7 @@ import type { CollectionSlug, Payload, PayloadRequest, Where } from 'payload'
 import type { ERPNextCredentials, LogFn } from '../types'
 import { authHeaders } from '../endpoints/erpnextProxy'
 import {
+    buildRelatedDocData,
     chooseMatchField,
     describeRelationship,
     findFieldConfig,
@@ -167,13 +168,66 @@ async function resolveRelated(
     }
 
     if (res.totalDocs === 0) {
-        log?.('warn', `Lookup found no ${collection} with ${field} = "${String(rawValue)}" — leaving ${mapping.payload_field} unset`)
-        return undefined
+        if (!mapping.create_if_missing) {
+            log?.('warn', `Lookup found no ${collection} with ${field} = "${String(rawValue)}" — leaving ${mapping.payload_field} unset`)
+            return undefined
+        }
+        // Frappe's Link field guarantees the target exists upstream, so an absent Payload
+        // counterpart is a gap in what has been synced, not bad data. Filling it here
+        // removes the ordering dependency between rules: a fresh CMS no longer needs the
+        // Item Group rule run before the Item rule, and a webhook for an item whose group
+        // has never synced stops failing permanently.
+        const created = await createRelatedDoc(req, collection, field, rawValue, siteId, log)
+        if (created === undefined) return undefined
+        return target.hasMany ? [created] : created
     }
     const id = (res.docs[0] as { id: string | number }).id
     // A hasMany relationship stores an array. One ERPNext Link field yields one target,
     // so wrap it rather than writing a bare id the field will reject.
     return target.hasMany ? [id] : id
+}
+
+/**
+ * Create the document a `create_if_missing` link could not find.
+ *
+ * Only derivable fields are set — see buildRelatedDocData. Anything else the collection
+ * requires makes the create fail, and the error names that field so an operator can add
+ * a Constant Value rather than being told only that "something" was invalid.
+ */
+async function createRelatedDoc(
+    req: PayloadRequest,
+    collection: string,
+    matchField: string,
+    rawValue: unknown,
+    siteId: string | number,
+    log?: LogFn,
+): Promise<string | number | undefined> {
+    const relatedConfig = req.payload.collections?.[collection]?.config
+    const data = buildRelatedDocData(relatedConfig?.fields as unknown[] | undefined, matchField, String(rawValue), siteId)
+    // Match the main create path: inherit the site's organization for tenant-scoped
+    // collections, and publish immediately so a draft-enabled target is not created
+    // invisible to everything that reads published content.
+    try {
+        const siteDoc = await req.payload.findByID({ collection: 'sites', id: siteId, depth: 0, overrideAccess: true })
+        const org = (siteDoc as Record<string, unknown>)?.organization
+        if (org) data.organization = typeof org === 'object' ? (org as { id: unknown }).id : org
+    } catch { /* site without organization — non-fatal */ }
+    data._status = 'published'
+
+    try {
+        const doc = await req.payload.create({
+            collection: collection as CollectionSlug,
+            data: data as never,
+            overrideAccess: true,
+        })
+        log?.('info', `Created missing ${collection} "${String(rawValue)}" for a link`, { id: doc.id })
+        return doc.id as string | number
+    } catch (err) {
+        log?.('error', `Could not create ${collection} "${String(rawValue)}" — add a Constant Value for whatever it still requires, or untick "create it if missing"`, {
+            error: err instanceof Error ? err.message : String(err),
+        })
+        return undefined
+    }
 }
 
 /**

@@ -228,6 +228,23 @@ polymorphic `relationTo`, a target that is not a relationship, a collection with
 `useAsTitle`, or a `useAsTitle` that resolves to `id` or any non-text field. Each names
 the rule and field in the log.
 
+### When the target does not exist yet
+
+By default an unresolved link leaves the field unset, so a required relationship fails
+the record. That makes rule ORDER load-bearing: on a fresh site the Item Group rule has
+to be saved before the Item rule, and an Item webhook arriving before its Item Group has
+ever synced fails permanently.
+
+Tick **Create it if missing** on the row to close that. The target is created from the
+ERPNext value — Frappe's Link field guarantees it exists upstream, so its absence in
+Payload is a gap in what has been synced, not bad data. Only derivable fields are
+filled: the matched field, a required `slug`, the site, and the site's organization.
+Anything else the collection requires is left for Payload to reject, and the error names
+it so you can add a Constant Value.
+
+It is off by default because creating records nobody asked for is how a catalogue ends
+up holding ERPNext scaffolding such as "All Item Groups" and "Raw Material".
+
 Lookups are scoped to the rule's own site whenever the looked-up collection has a `site` field, so one tenant's records can never link to another tenant's documents. A lookup that matches nothing leaves the field unset and logs a warning rather than writing a bad reference — if the field is required, the record then fails validation and is counted in `failed`.
 
 Transforms also apply to the upsert key: if the key row is `name → slug` with `slugify`, matching is done on the slug, because that is what is stored.

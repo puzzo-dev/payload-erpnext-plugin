@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { slugify, stripHtml, getUpsertKeyMapping, erpFetchFields, describeRelationship, chooseMatchField, type ERPNextSyncRule } from './transforms'
+import { slugify, stripHtml, getUpsertKeyMapping, erpFetchFields, describeRelationship, chooseMatchField, buildRelatedDocData, type ERPNextSyncRule } from './transforms'
 
 describe('slugify', () => {
     it('lowercases and hyphenates a display name', () => {
@@ -186,5 +186,53 @@ describe('stripHtml', () => {
 
     it('handles an empty value', () => {
         assert.equal(stripHtml(''), '')
+    })
+})
+
+describe('buildRelatedDocData', () => {
+    // Mirrors payload-cms: catalogue-categories requires both name and slug, and is
+    // site-scoped. A create that omitted slug would fail validation every time.
+    const categoryFields = [
+        { name: 'name', type: 'text', required: true },
+        { name: 'slug', type: 'text', required: true },
+        { name: 'site', type: 'relationship', relationTo: 'sites' },
+        { name: 'sort_order', type: 'number' },
+    ]
+
+    it('sets the matched field, a derived slug, and the site', () => {
+        assert.deepEqual(
+            buildRelatedDocData(categoryFields, 'name', 'Exotic Signature Mixes', 1),
+            { name: 'Exotic Signature Mixes', slug: 'exotic-signature-mixes', site: 1 },
+        )
+    })
+
+    it('does not overwrite the matched field when matching on slug itself', () => {
+        assert.deepEqual(
+            buildRelatedDocData(categoryFields, 'slug', 'cocktails', 1),
+            { slug: 'cocktails', site: 1 },
+        )
+    })
+
+    it('omits site for a collection that is not site-scoped', () => {
+        const fields = [{ name: 'name', type: 'text' }, { name: 'slug', type: 'text' }]
+        assert.deepEqual(
+            buildRelatedDocData(fields, 'name', 'Cocktails', 7),
+            { name: 'Cocktails', slug: 'cocktails' },
+        )
+    })
+
+    it('omits slug when the collection has none', () => {
+        const fields = [{ name: 'name', type: 'text' }, { name: 'site', type: 'relationship' }]
+        assert.deepEqual(buildRelatedDocData(fields, 'name', 'Cocktails', 3), { name: 'Cocktails', site: 3 })
+    })
+
+    // Guessing a value for an arbitrary required field would create records that pass
+    // validation and mean nothing, so they are deliberately left for Payload to reject.
+    it('invents nothing for other required fields', () => {
+        const fields = [
+            { name: 'name', type: 'text', required: true },
+            { name: 'owner', type: 'relationship', relationTo: 'users', required: true },
+        ]
+        assert.deepEqual(buildRelatedDocData(fields, 'name', 'Cocktails', 1), { name: 'Cocktails' })
     })
 })

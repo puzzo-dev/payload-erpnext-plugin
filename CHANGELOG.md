@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.3.0
+
+### Added
+
+- **`create it if missing` on a link row.** A `link`/`lookup` that resolved to nothing
+  left the field unset, so a required relationship failed the whole record. That made
+  rule ORDER load-bearing and undocumented: on a fresh site the Item Group rule had to
+  be saved before the Item rule, or all 17 items failed with "Category invalid" and
+  nothing said why. The live webhook had a permanent version of it — an Item arriving
+  before its Item Group had ever synced failed and stayed failed, with no retry.
+
+  Ticked, the missing target is created from the ERPNext value. Frappe's Link field
+  guarantees that document exists upstream, so its absence in Payload is a gap in what
+  has been synced rather than bad data.
+
+  Only derivable fields are filled: the matched field (the ERPNext value by
+  definition), a required `slug` (always a function of the name), and the site, plus the
+  site's organization for tenant-scoped collections. Anything else the collection
+  requires is left for Payload to reject, and the error names it so a Constant Value can
+  be added — inventing values would produce records that validate and mean nothing.
+
+  Off by default. Creating records nobody asked for is how a catalogue ends up holding
+  ERPNext scaffolding like "All Item Groups" and "Raw Material".
+
+### Migration required
+
+- `erpnext_sync_rules_field_mappings.create_if_missing` (boolean, default false). See
+  `payload-cms/src/migrations/20260804_090000_erpnext_sync_rules_create_if_missing.ts`.
+
 ## 2.2.0
 
 ### Added

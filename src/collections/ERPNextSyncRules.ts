@@ -296,6 +296,16 @@ export const ERPNextSyncRules: CollectionConfig = {
                                     },
                                 },
                                 {
+                                    name: 'create_if_missing',
+                                    type: 'checkbox',
+                                    defaultValue: false,
+                                    label: 'Create it if missing',
+                                    admin: {
+                                        condition: (_data, siblingData) => siblingData?.transform === 'lookup' || siblingData?.transform === 'link',
+                                        description: 'When the ERPNext value matches no existing document, create one instead of failing the record. Removes the ordering dependency between rules — a fresh site no longer needs the category rule run before the item rule, and a webhook for an item whose category has never synced stops failing permanently. Only the matched field, the slug and the site are filled in; anything else the collection requires must come from a Constant Value. Leave off if you would rather ERPNext\'s own scaffolding records (e.g. "All Item Groups") never appear.',
+                                    },
+                                },
+                                {
                                     type: 'row',
                                     admin: { condition: (_data, siblingData) => siblingData?.transform === 'lookup' || siblingData?.transform === 'link' },
                                     fields: [
