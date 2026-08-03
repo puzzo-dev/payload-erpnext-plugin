@@ -286,12 +286,13 @@ export const ERPNextSyncRules: CollectionConfig = {
                                     label: 'Convert Value',
                                     options: [
                                         { label: 'Copy as-is', value: 'none' },
+                                        { label: 'Plain text (strip HTML formatting)', value: 'strip_html' },
                                         { label: 'Convert to slug (e.g. "Exotic Mixes" → "exotic-mixes")', value: 'slugify' },
                                         { label: 'Link to the related document (for relationship fields)', value: 'link' },
                                         { label: 'Link, choosing the collection and field myself', value: 'lookup' },
                                     ],
                                     admin: {
-                                        description: 'ERPNext carries display names, not slugs or document IDs — copying either one into a slug or relationship field fails validation. "Convert to slug" derives a slug. "Link to the related document" resolves the ERPNext name to the right document on its own, using the relationship\'s own target collection and that collection\'s title field; pick the manual variant only for polymorphic relationships or to match on something other than the title.',
+                                        description: 'ERPNext carries display names, not slugs or document IDs — copying either one into a slug or relationship field fails validation. Rich-text fields arrive as HTML, so use \\"Plain text\\" for a plain textarea target or the markup is stored and every consumer has to strip it. "Convert to slug" derives a slug. "Link to the related document" resolves the ERPNext name to the right document on its own, using the relationship\'s own target collection and that collection\'s title field; pick the manual variant only for polymorphic relationships or to match on something other than the title.',
                                     },
                                 },
                                 {

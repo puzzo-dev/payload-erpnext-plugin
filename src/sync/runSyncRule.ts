@@ -10,6 +10,7 @@ import {
     getUpsertKeyMapping,
     resolveSiteId,
     slugify,
+    stripHtml,
     type ERPNextFieldMapping,
     type ERPNextSyncRule,
 } from './transforms'
@@ -22,6 +23,7 @@ export {
     getUpsertKeyMapping,
     resolveSiteId,
     slugify,
+    stripHtml,
     type ERPNextFieldMapping,
     type ERPNextSyncRule,
     type MappingTransform,
@@ -192,6 +194,8 @@ export async function applyMappingTransform(
 ): Promise<unknown> {
     if (rawValue === undefined || rawValue === null || rawValue === '') return rawValue
     switch (mapping.transform) {
+        case 'strip_html':
+            return stripHtml(String(rawValue))
         case 'slugify':
             return slugify(String(rawValue))
         case 'link': {

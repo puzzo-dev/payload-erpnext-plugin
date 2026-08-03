@@ -205,6 +205,7 @@ ERPNext carries display names — never slugs, never Payload document IDs — so
 | Transform | Use for | Example |
 |-----------|---------|---------|
 | `none` (default) | Everything else. Copies the ERPNext value unchanged. | `item_name` → `title` |
+| `strip_html` | A plain `text`/`textarea` target fed by a Frappe rich-text field. ERPNext returns those as HTML, so a verbatim copy stores markup in a plain-text field. | Item `description` `<div><p>A timeless classic…</p></div>` → `description` `A timeless classic…` |
 | `slugify` | A required `slug` field with no ERPNext counterpart. | Item Group `name` "Exotic Signature Mixes" → `slug` `exotic-signature-mixes` |
 | `link` | A `relationship` field. **Prefer this.** Pick only the Payload field — the collection comes from the field's `relationTo` and the match field from that collection's `admin.useAsTitle`. | Item `item_group` "Cocktails" → `category` → id of the `catalogue-categories` doc named "Cocktails" |
 | `lookup` | The manual form of `link`: name the collection and field yourself. For polymorphic relationships, or to match on a field other than the title. | as above, with **Look Up In Collection** and **Match Against Field** typed in |

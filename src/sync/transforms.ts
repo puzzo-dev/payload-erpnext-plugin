@@ -12,6 +12,11 @@
  * How a mapped ERPNext value is converted before it is written to the Payload field.
  *
  *  - `none`     copy verbatim (the original, and still the default) behaviour.
+ *  - `strip_html` flatten ERPNext rich text to plain text. Frappe Text Editor fields
+ *               come back as HTML (`<div><p>…</p></div>`) even when the Payload target
+ *               is a plain textarea, so an un-transformed copy stores markup that every
+ *               consumer then has to strip at render. Normalising here means the CMS
+ *               holds prose an editor can actually read and edit.
  *  - `slugify`  URL-safe slug of the ERP value. Exists because required Payload `slug`
  *               fields have no ERPNext counterpart — Frappe doctypes carry a display
  *               name only, so an un-transformed map left `slug` empty and every create
@@ -30,7 +35,7 @@
  * is always invalid — the field wants a document ID, and Frappe's foreign key is the
  * docname.
  */
-export type MappingTransform = 'none' | 'slugify' | 'link' | 'lookup'
+export type MappingTransform = 'none' | 'strip_html' | 'slugify' | 'link' | 'lookup'
 
 export interface ERPNextFieldMapping {
     erp_field?: string | null
@@ -102,6 +107,56 @@ export function slugify(value: string): string {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
+}
+
+/**
+ * Named entities that survive tag removal in ERPNext prose. `&amp;` is decoded
+ * separately and last, so "&amp;lt;" yields the visible text "&lt;" rather than "<".
+ */
+const HTML_ENTITIES: Record<string, string> = {
+    '&nbsp;': ' ',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&apos;': "'",
+    '&mdash;': '\u2014',
+    '&ndash;': '\u2013',
+    '&hellip;': '\u2026',
+    '&lsquo;': '\u2018',
+    '&rsquo;': '\u2019',
+    '&ldquo;': '\u201c',
+    '&rdquo;': '\u201d',
+}
+
+/** Numeric entities (&#8212; and &#x2014;), which rich-text editors emit freely. */
+const NUMERIC_ENTITY = /&#(x[0-9a-f]+|\d+);/gi
+
+/**
+ * Flatten HTML to plain text.
+ *
+ * Deliberately a copy of @ivarse/shared-cms's stripHtml rather than an import: this
+ * package is published to npm on its own and cannot depend on a workspace package.
+ * The duplication is the cost of that boundary.
+ *
+ * Block-level boundaries become spaces so "</p><p>" does not weld two sentences
+ * together, and runs of whitespace collapse.
+ */
+export function stripHtml(value: string): string {
+    if (!value) return ''
+    const text = value
+        // Drop script/style bodies outright — their contents are not prose.
+        .replace(/<(script|style)[\s>][\s\S]*?<\/\1>/gi, '')
+        // Block and line-break boundaries carry a word gap; inline tags do not.
+        .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)\s*>/gi, ' ')
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<[^>]*>/g, '')
+    const decoded = Object.entries(HTML_ENTITIES)
+        .reduce((acc, [entity, char]) => acc.split(entity).join(char), text)
+        .replace(NUMERIC_ENTITY, (match, code: string) => {
+            const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : parseInt(code, 10)
+            return Number.isFinite(point) && point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : match
+        })
+    return decoded.split('&amp;').join('&').replace(/\s+/g, ' ').trim()
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { slugify, getUpsertKeyMapping, erpFetchFields, describeRelationship, chooseMatchField, type ERPNextSyncRule } from './transforms'
+import { slugify, stripHtml, getUpsertKeyMapping, erpFetchFields, describeRelationship, chooseMatchField, type ERPNextSyncRule } from './transforms'
 
 describe('slugify', () => {
     it('lowercases and hyphenates a display name', () => {
@@ -147,5 +147,44 @@ describe('chooseMatchField', () => {
     it('asks for an override when the collection sets no useAsTitle', () => {
         const result = chooseMatchField(categoryFields, undefined, null, 'catalogue-categories')
         assert.ok('reason' in result && result.reason.includes('no admin.useAsTitle'))
+    })
+})
+
+describe('stripHtml', () => {
+    // The literal value that appeared on the live menu, tags and all.
+    it('flattens the HTML ERPNext actually sends', () => {
+        assert.equal(
+            stripHtml('<div><p>A timeless classic elevated with hand-muddled fresh strawberries.</p></div>'),
+            'A timeless classic elevated with hand-muddled fresh strawberries.',
+        )
+    })
+
+    it('does not weld sentences together across block boundaries', () => {
+        assert.equal(stripHtml('<p>One.</p><p>Two.</p>'), 'One. Two.')
+    })
+
+    it('treats <br> as a word gap', () => {
+        assert.equal(stripHtml('<p>A<br>B</p>'), 'A B')
+    })
+
+    it('decodes named and numeric entities', () => {
+        assert.equal(stripHtml('<p>Gin &amp; Tonic&nbsp;&mdash; 5&#39;s</p>'), "Gin & Tonic — 5's")
+        assert.equal(stripHtml('<p>&#8212; and &#x2014;</p>'), '— and —')
+    })
+
+    it('decodes &amp; last, so double-escaped markup stays visible text', () => {
+        assert.equal(stripHtml('&amp;lt;not markup&amp;gt;'), '&lt;not markup&gt;')
+    })
+
+    it('drops script bodies rather than inlining their source', () => {
+        assert.equal(stripHtml('<p>hi</p><script>alert(1)</script>'), 'hi')
+    })
+
+    it('is idempotent — already-plain text is unchanged', () => {
+        assert.equal(stripHtml('Just prose.'), 'Just prose.')
+    })
+
+    it('handles an empty value', () => {
+        assert.equal(stripHtml(''), '')
     })
 })

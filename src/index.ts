@@ -244,6 +244,7 @@ export {
     mapErpRecord,
     applyMappingTransform,
     slugify,
+    stripHtml,
     type ERPNextSyncRule,
     type ERPNextFieldMapping,
     type MappingTransform,

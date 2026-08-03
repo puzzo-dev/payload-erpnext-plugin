@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.0
+
+### Added
+
+- **`strip_html` transform.** Frappe Text Editor fields come back from the REST API as
+  HTML, so an Item's description arrives as `<div><p>…</p></div>` even when the Payload
+  target is a plain `textarea`. Copying it verbatim stored markup in a plain-text field,
+  which rendered as literal tags on the storefront and left every consumer to strip it at
+  render time. Normalising at sync means the CMS holds prose an editor can read and edit,
+  and each consumer stops re-deriving the same cleanup.
+
+  Block boundaries become spaces so `</p><p>` does not weld two sentences together,
+  script and style bodies are dropped, and named plus numeric entities are decoded —
+  with `&amp;` decoded last so `&amp;lt;` reads as visible text rather than becoming
+  markup.
+
+  Opt-in per mapping row: a field whose Payload target genuinely is rich text keeps its
+  markup by leaving the row on "Copy as-is".
+
+### Migration required
+
+- `erpnext_sync_rules_field_mappings.transform` gains the enum value `strip_html`. See
+  `payload-cms/src/migrations/20260803_210000_erpnext_sync_rules_strip_html_transform.ts`.
+
 ## 2.1.0
 
 ### Added
