@@ -65,8 +65,16 @@ function dottedPathLookup(ctx: Record<string, unknown>, path: string): unknown {
 export function resolveValue(template: string, ctx: Record<string, unknown>): unknown {
   const wholeMatch = template.trim().match(/^\{\{\s*([\w.]+)\s*\}\}$/)
   if (wholeMatch) {
+    // An unresolved whole-string reference used to fall back to the TEMPLATE ITSELF,
+    // so a mapping whose path was missing sent the literal "{{doc.values.lead_source}}"
+    // to ERPNext. On a Link field that surfaces as the baffling
+    // "LinkValidationError: Could not find Source: {{doc.values.lead_source}}"; on a
+    // Data field it is worse, silently storing the placeholder as if it were content.
+    // The mixed-text branch below has always resolved a missing path to '', so the two
+    // branches disagreed. Returning undefined lets callers omit the field entirely and
+    // leave Frappe to apply its own default.
     const val = dottedPathLookup(ctx, wholeMatch[1])
-    return val !== undefined ? val : template
+    return val
   }
   if (template.includes('{{')) {
     return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key: string) => {
@@ -135,7 +143,12 @@ export async function erpPostHandler(ctx: any): Promise<any> {
   const mapping = (step.field_mapping ?? {}) as Record<string, string>
   const docData: Record<string, unknown> = { doctype }
   for (const [erpField, sourceTemplate] of Object.entries(mapping)) {
-    docData[erpField] = resolveValue(sourceTemplate, workflowContext)
+    const value = resolveValue(sourceTemplate, workflowContext)
+    // Omit rather than send undefined: an unresolved reference means the workflow
+    // context simply has no such value, and Frappe should apply its own default
+    // instead of receiving a placeholder or a literal "undefined".
+    if (value === undefined) continue
+    docData[erpField] = value
   }
 
   const prefix = (step.result_key as string) || 'erp'
