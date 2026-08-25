@@ -46,10 +46,33 @@ describe('rateLimit', () => {
         assert.strictEqual(allowed.allowed, true)
     })
 
-    it('extracts socket IP when no proxy is trusted', () => {
+    it('falls back to one shared bucket when no proxy is trusted', () => {
+        // This test used to assert that the socket address was used. That path
+        // never actually ran: Payload v3 builds its request as
+        // Object.assign(request, customRequest) over a Web Request, which has no
+        // `socket` or `connection`. The real code therefore fell through to a
+        // random per-request key, which silently disabled every rate limit in
+        // this plugin — including the public /anonymous-upload endpoint.
+        //
+        // The correct behaviour is a single shared key: an unidentifiable client
+        // is still subject to a limit, and a client cannot choose its own bucket.
         process.env.TRUSTED_PROXY_COUNT = '0'
-        const req = { headers: makeHeaders({ 'x-forwarded-for': '1.2.3.4' }), connection: { remoteAddress: '5.6.7.8' } }
-        assert.strictEqual(getClientIp(req), '5.6.7.8')
+        const req = { headers: makeHeaders({ 'x-forwarded-for': '1.2.3.4' }) }
+        assert.strictEqual(getClientIp(req), 'unidentified')
+    })
+
+    it('never returns a unique key per request', () => {
+        process.env.TRUSTED_PROXY_COUNT = '0'
+        const a = getClientIp({ headers: makeHeaders() })
+        const b = getClientIp({ headers: makeHeaders() })
+        assert.strictEqual(a, b)
+        assert.ok(!a.startsWith('anon-'), 'a random key would make every bucket empty')
+    })
+
+    it('reads x-forwarded-for from the right, so a prepended entry cannot spoof it', () => {
+        process.env.TRUSTED_PROXY_COUNT = '1'
+        const req = { headers: makeHeaders({ 'x-forwarded-for': '1.1.1.1, 198.51.100.9' }) }
+        assert.strictEqual(getClientIp(req), '198.51.100.9')
     })
 
     it('extracts real-ip from trusted proxy', () => {

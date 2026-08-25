@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.4.3
+
+### Fixed
+- ERP-synced records were not being published. The sync wrote `_status`, Payload's
+  draft/publish flag, but the `20260824_100500_remove_versioning` migration removed
+  versioning from these collections — so `_status` no longer exists and the write did
+  nothing. It now sets the plain `status` field the collections actually have.
+- Dropped `draft: true` from the upsert and lookup queries for the same reason: with
+  versioning gone the option is meaningless.
+
+### Changed
+- Hardened `rateLimit` and `ssrfGuard`, with tests for both.
+- Export `getUpsertKeyMapping` and `erpFetchFields` so callers can assert a rule is
+  configured before running a sync.
+- Documented the canonical sources for the mirrored `organizationField` and
+  credential-crypto helpers.
+
 ## 2.4.0
 
 ### Added

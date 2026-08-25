@@ -7,6 +7,13 @@
  * Optional: set REDIS_URL to enable Redis-backed rate limiting.
  * REQUIRED if you ever scale the CMS horizontally (multiple containers),
  * because in-memory state is not shared across processes.
+ *
+ * CANONICAL SOURCE: `@ivarse/shared-cms/rate-limit` holds the authoritative
+ * `getClientIp` / `UNIDENTIFIED_CLIENT_KEY`. This plugin is a separately
+ * published package and cannot import from the workspace-only shared-cms,
+ * so the client-IP logic is mirrored here. When the rule changes, update
+ * shared-cms first, then mirror it here. The CMS's `src/utils/rateLimit.ts`
+ * imports directly from shared-cms and needs no manual sync.
  */
 
 import type { RateLimitEntry } from '../types'
@@ -41,6 +48,10 @@ class InMemoryRateLimiter {
 
     constructor() {
         this.cleanupInterval = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS)
+        // A library module must not keep its host process alive just to run a
+        // housekeeping sweep. Without this, any process that merely touches the
+        // rate limiter — including a test run — hangs instead of exiting.
+        this.cleanupInterval.unref?.()
     }
 
     stopCleanup(): void {
@@ -104,18 +115,42 @@ export async function checkRateLimit(
     if (redisClient) {
         try {
             const now = Date.now()
-            const pipeline = redisClient.pipeline()
-            pipeline.zremrangebyscore(key, 0, now - windowMs)
-            pipeline.zcard(key)
-            pipeline.zadd(key, now, `${now}-${Math.random()}`)
-            pipeline.pexpire(key, windowMs)
 
-            const results = await pipeline.exec()
-            const count = (results?.[1]?.[1] as number) || 0
+            // Evict expired members, then read the count — WITHOUT recording
+            // this request yet.
+            //
+            // The previous pipeline issued the zadd unconditionally, alongside
+            // the zcard, so a request that was about to be REJECTED still wrote
+            // a member and still refreshed the key's TTL. A client that kept
+            // retrying therefore kept pushing its own window forward and could
+            // never come back under the limit, however long it waited — the
+            // block became permanent rather than expiring. The in-memory
+            // limiter below has never behaved that way, so the two backends
+            // disagreed about what the limit means.
+            const readPipeline = redisClient.pipeline()
+            readPipeline.zremrangebyscore(key, 0, now - windowMs)
+            readPipeline.zcard(key)
+            const readResults = await readPipeline.exec()
+            const count = (readResults?.[1]?.[1] as number) || 0
 
             if (count >= maxRequests) {
-                return { allowed: false, retryAfterMs: windowMs }
+                // Retry after the OLDEST member in the window expires, which is
+                // when a slot actually frees up. Reporting the full window was
+                // always an over-estimate and told a well-behaved client to wait
+                // far longer than necessary.
+                const oldest = await redisClient.zrange(key, 0, 0, 'WITHSCORES')
+                const oldestScore = oldest.length > 1 ? Number(oldest[1]) : now
+                const retryAfterMs = Number.isFinite(oldestScore)
+                    ? Math.max(0, oldestScore + windowMs - now)
+                    : windowMs
+                return { allowed: false, retryAfterMs }
             }
+
+            // Allowed — now record it.
+            const writePipeline = redisClient.pipeline()
+            writePipeline.zadd(key, now, `${now}-${Math.random()}`)
+            writePipeline.pexpire(key, windowMs)
+            await writePipeline.exec()
             return { allowed: true }
         } catch (error) {
             console.error('[rateLimit] Redis error, falling back to memory', error)
@@ -130,36 +165,50 @@ export function __resetRateLimitStore(): void {
     limiter.stopCleanup()
 }
 
-/**
- * Extract client IP from a Payload request.
- *
- * Priority (proxy headers only trusted when TRUSTED_PROXY_COUNT > 0):
- *   1. x-real-ip / x-forwarded-for — ONLY behind a trusted proxy
- *   2. Underlying socket remote address (direct connection)
- *   3. Random per-request key (prevents shared bucket exhaustion)
- */
-export function getClientIp(req: { headers: Headers; connection?: { remoteAddress?: string } }): string {
-    // x-forwarded-for / x-real-ip are client-settable; trust them only when an
-    // explicit trusted-proxy count says a proxy in front overwrites them. Otherwise
-    // an attacker rotates the header to bypass rate limiting.
-    const proxyCount = parseInt(process.env.TRUSTED_PROXY_COUNT ?? '0', 10)
-    if (proxyCount > 0) {
-        const realIp = req.headers.get('x-real-ip')
-        if (realIp) return realIp
+/** Key used when the client cannot be identified — see getClientIp. */
+export const UNIDENTIFIED_CLIENT_KEY = 'unidentified'
 
+/**
+ * Extract a rate-limit key identifying the client of a Payload request.
+ *
+ * Priority (proxy headers are only trusted when TRUSTED_PROXY_COUNT > 0):
+ *   1. x-forwarded-for, indexed from the right by the trusted hop count
+ *   2. x-real-ip
+ *   3. A single shared bucket — NEVER a per-request unique key
+ *
+ * x-forwarded-for is read FIRST and indexed from the RIGHT because a client can
+ * prepend entries to that header but cannot remove the ones the trusted proxies
+ * append. Reading x-real-ip first meant a single client-supplied header won
+ * outright.
+ *
+ * The previous fallback chain ended in `anon-${Math.random()}`, which silently
+ * disabled the rate limit on every endpoint in this plugin — including
+ * /anonymous-upload, which is a public, unauthenticated file upload. Two facts
+ * made that unavoidable rather than exceptional: Payload v3 builds its request as
+ * `Object.assign(request, customRequest)` over a Web `Request`, so `socket` and
+ * `connection` never exist on this path; and TRUSTED_PROXY_COUNT was set nowhere,
+ * so the header branch never ran either. Every request therefore produced a fresh
+ * random key, and a bucket keyed on a fresh random string is empty every time.
+ *
+ * A shared bucket for unidentifiable clients can be exhausted by one bad actor,
+ * which degrades service. A unique key per request cannot be exhausted at all,
+ * which removes the protection entirely. Degraded beats absent.
+ *
+ * This mirrors payload-cms/src/utils/rateLimit.ts, which had the identical
+ * defect — the two copies must not drift apart again.
+ */
+export function getClientIp(req: { headers: Headers }): string {
+    const proxyCount = parseInt(process.env.TRUSTED_PROXY_COUNT ?? '0', 10)
+    if (Number.isFinite(proxyCount) && proxyCount > 0) {
         const parts = req.headers.get('x-forwarded-for')?.split(',').map(s => s.trim()).filter(Boolean)
         if (parts && parts.length > 0) {
-            const idx = parts.length - proxyCount
-            const ip = parts[Math.max(0, idx)]
+            const ip = parts[Math.max(0, parts.length - proxyCount)]
             if (ip) return ip
         }
+
+        const realIp = req.headers.get('x-real-ip')?.trim()
+        if (realIp) return realIp
     }
 
-    // Node.js IncomingMessage exposes the underlying socket
-    const socketIp = (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress
-        ?? req.connection?.remoteAddress
-    if (socketIp) return socketIp
-
-    // Last resort: random key per request to avoid all unknown clients sharing one bucket
-    return `anon-${Math.random().toString(36).slice(2, 10)}`
+    return UNIDENTIFIED_CLIENT_KEY
 }

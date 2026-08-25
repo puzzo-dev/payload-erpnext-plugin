@@ -4,6 +4,13 @@
  * Provides AES-256-GCM encryption for ERPNext API credentials stored in the
  * database. Credentials are encrypted before save and decrypted after read.
  *
+ * CANONICAL SOURCE: `@ivarse/shared-cms/credential-crypto` holds the
+ * authoritative `createCredentialCrypto` factory. This plugin is a separately
+ * published package and cannot import from the workspace-only shared-cms, so
+ * the crypto logic is mirrored here. When the logic changes, update shared-cms
+ * first, then mirror it here. The CMS's `src/utils/credentialCrypto.ts` imports
+ * directly from shared-cms and needs no manual sync.
+ *
  * Requires ERPNEXT_ENCRYPTION_KEY env var (32-byte hex string).
  * If the key is not set, credentials are stored/read in plain text (backward compatible).
  *

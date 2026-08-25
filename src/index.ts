@@ -247,6 +247,11 @@ export {
     findRulesForDoctype,
     mapErpRecord,
     applyMappingTransform,
+    // Which field_mappings row is the unique key. Exposed so callers (and tests)
+    // can assert the rule is configured before running a sync — the function
+    // fails closed and returns null when no row is flagged.
+    getUpsertKeyMapping,
+    erpFetchFields,
     slugify,
     stripHtml,
     type ERPNextSyncRule,

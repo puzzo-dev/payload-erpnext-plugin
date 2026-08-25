@@ -156,9 +156,6 @@ async function resolveRelated(
             limit: 1,
             depth: 0,
             overrideAccess: true,
-            // Same reason as findExisting: a draft-only related doc must still be matchable,
-            // otherwise the lookup misses and the parent record fails to validate.
-            draft: true,
         })
     } catch (err) {
         log?.('error', `Lookup query failed on ${collection}.${field} for value "${String(rawValue)}" — check that "Match Against Field" names a field holding this kind of value (leaving ${mapping.payload_field} unset)`, {
@@ -205,14 +202,14 @@ async function createRelatedDoc(
     const relatedConfig = req.payload.collections?.[collection]?.config
     const data = buildRelatedDocData(relatedConfig?.fields as unknown[] | undefined, matchField, String(rawValue), siteId)
     // Match the main create path: inherit the site's organization for tenant-scoped
-    // collections, and publish immediately so a draft-enabled target is not created
+    // collections, and publish immediately so the target is not created
     // invisible to everything that reads published content.
     try {
         const siteDoc = await req.payload.findByID({ collection: 'sites', id: siteId, depth: 0, overrideAccess: true })
         const org = (siteDoc as Record<string, unknown>)?.organization
         if (org) data.organization = typeof org === 'object' ? (org as { id: unknown }).id : org
     } catch { /* site without organization — non-fatal */ }
-    data._status = 'published'
+    data.status = 'published'
 
     try {
         const doc = await req.payload.create({
@@ -333,11 +330,6 @@ async function findExisting(
         limit: 1,
         depth: 0,
         overrideAccess: true,
-        // CRITICAL for idempotency on draft-enabled collections (e.g. catalogue-items):
-        // without draft:true, find() ignores draft-only docs, so a re-sync fails to match
-        // an existing record by its upsert key and CREATES A DUPLICATE. draft:true matches
-        // the latest version (draft or published) so upsert stays one-record-per-ERP-key.
-        draft: true,
     })
     return res.totalDocs > 0 ? (res.docs[0] as { id: string | number }) : null
 }
@@ -414,10 +406,8 @@ export async function upsertErpRecord(
     }
 
     const data = await mapErpRecord(req, rule, erpRecord, siteId, log)
-    // ERP is the source of truth, so synced records go live immediately. On collections
-    // with drafts enabled, `_status: 'published'` publishes them (otherwise they'd land as
-    // drafts and never appear); on non-draft collections Payload ignores the extra key.
-    data._status = 'published'
+    // ERP is the source of truth, so synced records go live immediately.
+    data.status = 'published'
     // Stamp when THIS system last pulled the record, on updates as well as creates —
     // an already-existing document is exactly the case where the operator needs to see
     // that the ERPNext link is live and when it last ran.
