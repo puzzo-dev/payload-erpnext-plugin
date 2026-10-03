@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.4
+
+### Fixed
+
+- An organization admin can configure ERPNext for every site in their organization.
+  Their account has no single site, and the previous check rejected that account.
+
 ## 2.4.3
 
 ### Fixed

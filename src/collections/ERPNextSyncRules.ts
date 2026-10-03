@@ -1,10 +1,11 @@
 import type { CollectionConfig, CollectionAfterChangeHook, CollectionSlug } from 'payload'
 import {
-    siteScopedCreate, siteScopedDelete, siteScopedRead, siteScopedUpdate
+    ownerSiteFilter, pinnedOwnerOrganization, siteScopedCreate, siteScopedDelete, siteScopedRead, siteScopedUpdate,
 } from '../access/roles'
 import { organizationField } from '../fields/organizationField'
 import { getCredentials } from '../endpoints/erpnextProxy'
 import { validateErpUrl } from '../utils/ssrfGuard'
+import { getUserSiteId, type UserWithRole } from '../types'
 import { backfillSyncRule, type ERPNextSyncRule } from '../sync/runSyncRule'
 
 const SYNC_RULES_SLUG = 'erpnext-sync-rules' as unknown as CollectionSlug
@@ -131,6 +132,15 @@ export const ERPNextSyncRules: CollectionConfig = {
                     type: 'relationship',
                     relationTo: 'sites',
                     required: true,
+                    filterOptions: ({ user, data }) =>
+                        ownerSiteFilter(user, (data as { organization?: unknown } | undefined)?.organization),
+                    hooks: {
+                        beforeValidate: [({ req, value }) => {
+                            const account = req.user as unknown as UserWithRole | undefined
+                            if (!account || account.role === 'super-admin') return value
+                            return getUserSiteId(account) ?? value
+                        }],
+                    },
                     admin: { description: 'The site this rule belongs to.', width: '70%' },
                 },
                 {
@@ -141,7 +151,11 @@ export const ERPNextSyncRules: CollectionConfig = {
                 },
             ],
         },
-        organizationField(),
+        organizationField({
+            hooks: {
+                beforeValidate: [({ req, value }) => pinnedOwnerOrganization(req.user, value)],
+            },
+        }),
         {
             type: 'tabs',
             tabs: [

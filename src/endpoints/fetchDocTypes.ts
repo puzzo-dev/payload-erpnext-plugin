@@ -1,6 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
-import { getUserSiteId, type UserWithRole } from '../types';
+import { type UserWithRole } from '../types';
+import { userMayAccessSite } from '../access/roles';
 import { getCredentials, authHeaders } from './erpnextProxy';
 import { validateErpUrl } from '../utils/ssrfGuard';
 
@@ -40,8 +41,6 @@ export const fetchDocTypesEndpoint: Endpoint = {
                     { status: 401 },
                 )
             }
-            const userSiteId = getUserSiteId(user)
-
             const ip = getClientIp(req)
             const rateCheck = await checkRateLimit(
                 `fetch-doctypes:${ip}`,
@@ -63,18 +62,6 @@ export const fetchDocTypesEndpoint: Endpoint = {
                 return Response.json({ error: 'Provide siteId or siteSlug' }, { status: 400 })
             }
 
-            if (user.role !== 'super-admin' && userSiteId) {
-                if (siteSlug) {
-                    return Response.json(
-                        { error: 'Scoped admins must use siteId, not siteSlug' },
-                        { status: 403 },
-                    )
-                }
-                if (siteId && String(siteId) !== String(userSiteId)) {
-                    return Response.json({ error: 'Not authorized to access this site' }, { status: 403 })
-                }
-            }
-
             const sites = await req.payload.find({
                 collection: 'sites' as unknown as CollectionSlug,
                 where: siteId ? { id: { equals: siteId } } : { slug: { equals: siteSlug } } as any,
@@ -86,6 +73,10 @@ export const fetchDocTypesEndpoint: Endpoint = {
             const site = sites.docs[0] as unknown as { id: string | number; slug?: string } | undefined
             if (!site) {
                 return Response.json({ error: 'Site not found' }, { status: 404 })
+            }
+
+            if (!(await userMayAccessSite(req, site.id))) {
+                return Response.json({ error: 'Not authorized to access this site' }, { status: 403 })
             }
 
             // getCredentials() correctly branches between api_key and oauth

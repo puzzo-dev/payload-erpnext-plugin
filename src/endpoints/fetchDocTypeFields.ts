@@ -1,6 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit'
-import { getUserSiteId, type UserWithRole } from '../types'
+import { type UserWithRole } from '../types'
+import { userMayAccessSite } from '../access/roles'
 import { getCredentials, authHeaders } from './erpnextProxy'
 import { validateErpUrl } from '../utils/ssrfGuard'
 
@@ -19,8 +20,6 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
                     { status: 401 },
                 )
             }
-            const userSiteId = getUserSiteId(user)
-
             const ip = getClientIp(req)
             const rateCheck = await checkRateLimit(
                 `fetch-doctype-fields:${ip}`,
@@ -41,7 +40,7 @@ export const fetchDocTypeFieldsEndpoint: Endpoint = {
                 return Response.json({ error: 'Provide siteId and doctype' }, { status: 400 })
             }
 
-            if (user.role !== 'super-admin' && userSiteId && String(siteId) !== String(userSiteId)) {
+            if (!(await userMayAccessSite(req, siteId))) {
                 return Response.json({ error: 'Not authorized to access this site' }, { status: 403 })
             }
 

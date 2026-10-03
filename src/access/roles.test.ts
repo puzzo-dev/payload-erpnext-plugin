@@ -7,6 +7,7 @@ import {
     siteScopedCreate,
     siteScopedUpdate,
     siteScopedDelete,
+    userMayAccessSite,
 } from './roles'
 
 function makeReq(user?: { role: string; site?: string | number | { id: string | number } }, internalAuth = false) {
@@ -75,5 +76,40 @@ describe('access helpers', () => {
             siteScopedDelete()(makeReq({ role: 'admin', site: 'site-123' })),
             { site: { equals: 'site-123' } },
         )
+    })
+
+    it('lets an organization admin manage every site in their organization', async () => {
+        const payload = {
+            find: async () => ({ docs: [{ id: 'site-a' }, { id: 'site-b' }] }),
+        }
+        const owner = { role: 'admin', organization: 'org-1' }
+        const req = { user: owner, headers: { get: () => null }, payload }
+        assert.deepStrictEqual(await siteScopedRead()({ req } as any), { site: { in: ['site-a', 'site-b'] } })
+        assert.deepStrictEqual(await siteScopedUpdate()({ req } as any), { site: { in: ['site-a', 'site-b'] } })
+        assert.deepStrictEqual(await siteScopedDelete()({ req } as any), { site: { in: ['site-a', 'site-b'] } })
+        assert.strictEqual(await siteScopedCreate()({ req, data: { site: 'site-b' } } as any), true)
+        assert.strictEqual(await siteScopedCreate()({ req, data: { site: 'site-z' } } as any), false)
+    })
+
+    it('denies an editor who has no site', () => {
+        assert.strictEqual(siteScopedRead()(makeReq({ role: 'editor' })), false)
+        assert.strictEqual(siteScopedCreate()({ req: makeReq({ role: 'editor' }).req, data: { site: 'site-a' } } as any), false)
+    })
+
+    it('denies an organization admin when their sites cannot be resolved', async () => {
+        const req = { user: { role: 'admin', organization: 'org-1' }, headers: { get: () => null } }
+        assert.strictEqual(await siteScopedRead()({ req } as any), false)
+        assert.strictEqual(await siteScopedCreate()({ req, data: { site: 'site-a' } } as any), false)
+    })
+
+    it('lets an organization admin use an endpoint only for their sites', async () => {
+        const payload = {
+            find: async () => ({ docs: [{ id: 'site-a' }] }),
+        }
+        const req = { user: { role: 'admin', organization: 'org-1' }, payload }
+        assert.strictEqual(await userMayAccessSite(req, 'site-a'), true)
+        assert.strictEqual(await userMayAccessSite(req, 'site-z'), false)
+        assert.strictEqual(await userMayAccessSite({ user: { role: 'editor', site: 'site-a' } }, 'site-a'), true)
+        assert.strictEqual(await userMayAccessSite({ user: { role: 'editor' } }, 'site-a'), false)
     })
 })

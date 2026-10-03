@@ -1,12 +1,12 @@
 import type { CollectionConfig, CollectionAfterChangeHook, CollectionSlug, FieldAccess } from 'payload'
 import {
-    siteScopedCreate, siteScopedDelete, siteScopedRead, siteScopedUpdate
+    ownerSiteFilter, pinnedOwnerOrganization, siteScopedCreate, siteScopedDelete, siteScopedRead, siteScopedUpdate,
 } from '../access/roles';
 import { organizationField } from '../fields/organizationField';
 import { encryptCredential, decryptCredential } from '../utils/erpnextCrypto';
 import { validateErpUrl } from '../utils/ssrfGuard';
 import { getCredentials, authHeaders } from '../endpoints/erpnextProxy';
-import type { ERPNextCompany, UserWithRole } from '../types';
+import { getUserSiteId, type ERPNextCompany, type UserWithRole } from '../types';
 
 /**
  * Field-level guard: only admins/super-admins (or trusted server calls using
@@ -233,6 +233,16 @@ export const ERPNextConfig: CollectionConfig = {
                     type: 'relationship',
                     relationTo: 'sites',
                     required: true,
+                    filterOptions: ({ user, data }) =>
+                        ownerSiteFilter(user, (data as { organization?: unknown } | undefined)?.organization),
+                    hooks: {
+                        beforeValidate: [({ req, value }) => {
+                            const account = req.user as unknown as UserWithRole | undefined
+                            if (!account || account.role === 'super-admin') return value
+                            const ownSite = getUserSiteId(account)
+                            return ownSite ?? value
+                        }],
+                    },
                     admin: {
                         description: 'The site this ERPNext config belongs to (one per site)',
                         width: '70%',
@@ -246,7 +256,11 @@ export const ERPNextConfig: CollectionConfig = {
                 },
             ],
         },
-        organizationField(),
+        organizationField({
+            hooks: {
+                beforeValidate: [({ req, value }) => pinnedOwnerOrganization(req.user, value)],
+            },
+        }),
 
         // ═══════════════════════════════════════════════════════════
         //  TABS

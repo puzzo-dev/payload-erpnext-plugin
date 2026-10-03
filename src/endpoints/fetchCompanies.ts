@@ -1,6 +1,7 @@
 import type { Endpoint, CollectionSlug } from 'payload'
 import { checkRateLimit, getClientIp } from '../utils/rateLimit';
-import { getUserSiteId, type UserWithRole, type ERPNextCompany } from '../types';
+import { type UserWithRole, type ERPNextCompany } from '../types';
+import { userMayAccessSite } from '../access/roles';
 import { getCredentials, authHeaders } from './erpnextProxy';
 import type { ERPNextCredentials } from '../types';
 
@@ -92,14 +93,11 @@ export const fetchCompaniesEndpoint: Endpoint = {
                 // Enforce tenant scoping for non-super-admins.
                 const cfgSite = cfg.site as string | number | { id?: string | number } | null | undefined
                 const cfgSiteId = cfgSite && typeof cfgSite === 'object' ? cfgSite.id : cfgSite
-                if (!isSuperAdmin) {
-                    const userSiteId = getUserSiteId(user)
-                    if (!userSiteId || String(cfgSiteId) !== String(userSiteId)) {
-                        return Response.json(
-                            { error: 'You can only fetch companies for your assigned site' },
-                            { status: 403 },
-                        )
-                    }
+                if (!isSuperAdmin && !(await userMayAccessSite(req, cfgSiteId as string | number | null | undefined))) {
+                    return Response.json(
+                        { error: 'You can only fetch companies for a site in your organization' },
+                        { status: 403 },
+                    )
                 }
 
                 // getCredentials() correctly branches between api_key and
