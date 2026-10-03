@@ -136,7 +136,7 @@
     "react-dom": "^19.0.0"
   },
   "dependencies": {
-    "ioredis": "^5.4.1"
+    "ioredis": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
